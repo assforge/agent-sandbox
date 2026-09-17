@@ -39,7 +39,9 @@ describe('parseArgs', () => {
     expect(parseArgs(['register'])).toEqual({ kind: 'register', root: undefined, workspace: undefined });
     expect(parseArgs(['register', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: undefined });
     expect(parseArgs(['--workspace', '/w', 'register', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: '/w' });
-    for (const argv of [['register', 'a', 'b'], ['register', '--json']]) {
+    expect(parseArgs(['unregister'])).toEqual({ kind: 'unregister', root: undefined, workspace: undefined });
+    expect(parseArgs(['unregister', '/w/repo'])).toEqual({ kind: 'unregister', root: '/w/repo', workspace: undefined });
+    for (const argv of [['register', 'a', 'b'], ['register', '--json'], ['unregister', 'a', 'b']]) {
       try {
         parseArgs(argv);
         expect.unreachable();
