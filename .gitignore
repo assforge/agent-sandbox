@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.tgz
+
+# Methodology process artifacts belong to spec nodes, never the repo
+review-findings*.md
+test-report.md
+discussions.md
+monitor-report.md
