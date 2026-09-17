@@ -8,7 +8,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       include: ['src/**/*.ts'],
-      exclude: ['src/bin/**'],
+      exclude: [],
       thresholds: {
         statements: 80,
         branches: 75,

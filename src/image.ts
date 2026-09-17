@@ -1,4 +1,5 @@
 import { AGENT_DEFINITIONS } from './agent.js';
+import type { WorkspaceEntry } from './registry.js';
 
 export interface ImageBuildPlan {
   contextDir: string;
@@ -44,4 +45,23 @@ export interface Activation {
 /** Activation is explicit and recorded only after the candidate verifies. */
 export function recordActivation(previous: string | null, candidate: string): Activation {
   return { previous, current: candidate };
+}
+
+/** Explicit cutover: the running image becomes the rollback target. */
+export function activateImage(entry: WorkspaceEntry, candidate: string): Activation {
+  const activation = recordActivation(entry.image, candidate);
+  entry.previousImage = activation.previous;
+  entry.image = activation.current;
+  return activation;
+}
+
+/** Rollback re-activates the previous digest. It never reverses a data migration. */
+export function rollbackImage(entry: WorkspaceEntry): Activation {
+  if (!entry.previousImage) {
+    throw new Error(`no previous image recorded for workspace ${entry.id}; rollback requires an earlier activation`);
+  }
+  const activation = recordActivation(entry.image, entry.previousImage);
+  entry.previousImage = activation.previous;
+  entry.image = activation.current;
+  return activation;
 }

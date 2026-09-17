@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+
+import { rejectForbiddenMount } from './config.js';
 
 export interface InstanceEntry {
   name: string;
@@ -13,6 +15,7 @@ export interface WorkspaceEntry {
   root: string;
   container: string;
   image: string | null;
+  previousImage: string | null;
   session: string;
   instances: InstanceEntry[];
   homeVolume: string;
@@ -38,7 +41,11 @@ export function rootDigest(canonicalRoot: string): string {
 export function basenameOf(canonicalRoot: string): string {
   const trimmed = canonicalRoot.replace(/\/+$/, '');
   const slash = trimmed.lastIndexOf('/');
-  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+  const raw = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+  // Docker names and tmux targets accept only a narrow charset; everything
+  // else becomes a hyphen so any root yields a usable id.
+  const sanitized = raw.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return sanitized || 'workspace';
 }
 
 export function workspaceId(canonicalRoot: string): string {
@@ -74,8 +81,12 @@ export function loadRegistry(registryPath: string): Registry {
 }
 
 export function saveRegistry(registryPath: string, registry: Registry): void {
-  mkdirSync(dirname(registryPath), { recursive: true });
-  writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`, 'utf8');
+  const dir = dirname(registryPath);
+  mkdirSync(dir, { recursive: true });
+  // Atomic write: a crash mid-write leaves the previous registry intact.
+  const tmpPath = join(dir, `.registry.tmp.${process.pid}.${Date.now()}`);
+  writeFileSync(tmpPath, `${JSON.stringify(registry, null, 2)}\n`, 'utf8');
+  renameSync(tmpPath, registryPath);
 }
 
 /** Exact lookup by canonical root. A digest collision with another root is an error. */
@@ -93,19 +104,31 @@ export function lookupWorkspace(registry: Registry, canonicalRoot: string): Work
   return null;
 }
 
+export interface RegisterOptions {
+  homeDir?: string;
+  canonicalize?: (path: string) => string;
+}
+
 export function registerWorkspace(
   registry: Registry,
   canonicalRoot: string,
   mounts: string[],
+  options: RegisterOptions = {},
 ): WorkspaceEntry {
   const existing = lookupWorkspace(registry, canonicalRoot);
   if (existing) return existing;
+  const canonicalize = options.canonicalize ?? ((path: string): string => path);
+  for (const mount of [canonicalRoot, ...mounts]) {
+    const problem = rejectForbiddenMount(canonicalize(mount), options.homeDir);
+    if (problem) throw new Error(`refused mount ${mount}: ${problem}`);
+  }
   const id = workspaceId(canonicalRoot);
   const entry: WorkspaceEntry = {
     id,
     root: canonicalRoot,
     container: `sandbox-${id}`,
     image: null,
+    previousImage: null,
     session: `sandbox-${id}`,
     instances: [],
     homeVolume: `sandbox-home-${id}`,

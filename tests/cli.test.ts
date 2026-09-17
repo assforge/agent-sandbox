@@ -52,7 +52,18 @@ describe('parseArgs', () => {
   });
 
   it('rejects unknown commands and misplaced arguments with exit code 2', () => {
-    for (const argv of [['frobnicate'], ['claude', 'extra'], ['doctor', 'extra'], ['workspace']]) {
+    for (const argv of [
+      ['frobnicate'],
+      ['claude', 'extra'],
+      ['doctor', 'extra'],
+      ['workspace'],
+      ['--', 'x'],
+      ['shell', '--name'],
+      ['shell', 'extra'],
+      ['shell', '--', 'x'],
+      ['codex', '--name', '--json'],
+      ['--workspace'],
+    ]) {
       try {
         parseArgs(argv);
         expect.unreachable();
@@ -61,5 +72,18 @@ describe('parseArgs', () => {
         expect((error as UsageError).exitCode).toBe(2);
       }
     }
+  });
+
+  it('accepts --json in the forwarded tail and --workspace with subcommands', () => {
+    expect(parseArgs(['doctor', '--', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });
+    expect(parseArgs(['--workspace', '/w', 'image', 'list'])).toEqual({
+      kind: 'image',
+      action: 'list',
+      rest: [],
+      workspace: '/w',
+    });
+    expect(parseArgs(['agent', 'list'])).toEqual({ kind: 'agentAdmin', action: 'list', rest: [], workspace: undefined });
+    expect(parseArgs(['agent', 'help'])).toEqual({ kind: 'agentAdmin', action: 'help', rest: [], workspace: undefined });
+    expect(parseArgs(['image', 'build'])).toEqual({ kind: 'image', action: 'build', rest: [], workspace: undefined });
   });
 });
