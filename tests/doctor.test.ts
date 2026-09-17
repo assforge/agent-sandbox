@@ -18,7 +18,7 @@ describe('runDoctor', () => {
 
   it('distinguishes missing CLI, dead daemon, missing tmux and missing image', () => {
     const noDocker = runDoctor({ ...healthy, pathLookup: (name) => (name === 'docker' ? null : `/usr/bin/${name}`) }, { image: null, network: null, networkExists: false, deadWindows: [] });
-    expect(noDocker.find((check) => check.id === 'docker-cli')?.status).toBe('fail');
+    expect(noDocker.find((check) => check.id === 'runtime-cli')?.status).toBe('fail');
     const deadDaemon = runDoctor({ ...healthy, commandSucceeds: () => false }, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
     expect(deadDaemon.find((check) => check.id === 'container-runtime')?.status).toBe('fail');
     expect(deadDaemon.find((check) => check.id === 'container-runtime')?.summary).toMatch(/daemon is unavailable/);
@@ -50,6 +50,17 @@ describe('runDoctor', () => {
     const dead = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: ['rollout'] });
     expect(dead.find((check) => check.id === 'workspace-windows')?.status).toBe('warn');
     expect(dead.find((check) => check.id === 'workspace-windows')?.remediation).toMatch(/reopen/);
+  });
+
+  it('probes the selected runtime and flags experimental engines', () => {
+    const apple = runDoctor(
+      { ...healthy, runtime: { display: 'Apple Container', binary: 'container', args: ['system', 'status'], verified: false } },
+      { image: null, network: null, networkExists: false, deadWindows: [] },
+    );
+    expect(apple.find((check) => check.id === 'runtime-cli')?.summary).toMatch(/Apple Container CLI/);
+    expect(apple.find((check) => check.id === 'runtime-maturity')?.status).toBe('warn');
+    const docker = runDoctor(healthy, { image: null, network: null, networkExists: false, deadWindows: [] });
+    expect(docker.find((check) => check.id === 'runtime-maturity')).toBeUndefined();
   });
 
   it('reports network posture per workspace policy', () => {

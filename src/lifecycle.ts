@@ -1,5 +1,7 @@
 import { checkReadiness, checkRestarted, configurationFingerprint, freshGeneration } from './readiness.js';
-import { networkName, sameImageId, type CommandRunner } from './docker.js';
+import { type CommandRunner } from './docker.js';
+import { networkName } from './registry.js';
+import { requireCapabilities, sameImageId } from './engines/runtime.js';
 import type { RuntimeEngine } from './engines/runtime.js';
 import type { WorkspaceEntry } from './registry.js';
 
@@ -12,8 +14,9 @@ export function instanceHome(instance: string): string {
 }
 
 /** Create the instance HOME before launch so agents land in owned state. */
-export function ensureInstanceHome(runner: CommandRunner, container: string, instance: string): void {
-  const created = runner.run('docker', ['exec', '-u', 'agent', container, 'mkdir', '-p', instanceHome(instance)]);
+export function ensureInstanceHome(runner: CommandRunner, runtime: RuntimeEngine, container: string, instance: string): void {
+  const spec = runtime.execVector(container, { workdir: CONTAINER_WORKDIR, argv: ['mkdir', '-p', instanceHome(instance)], user: 'agent', tty: false });
+  const created = runner.run(spec.command, spec.args);
   if (created.status !== 0) {
     throw new Error(`cannot prepare instance home for ${instance}: ${created.stderr.trim()}`);
   }
@@ -45,8 +48,17 @@ export function ensureReady(
 ): { generation: string; fingerprint: string } {
   let state = runtime.containerState(runner, entry.container, entry.id);
   if (state === 'foreign') {
-    throw new Error(`container name is owned by another setup: ${entry.container}; refusing to mutate`);
+    // A container owned by another runtime is cut over, not adopted: the
+    // runtime switch was confirmed at configure time as recreate-on-start.
+    // Anything else foreign is refused without mutation.
+    const ownerRuntime = runtime.containerRuntime(runner, entry.container);
+    if (ownerRuntime === null || ownerRuntime === runtime.name) {
+      throw new Error(`container name is owned by another setup: ${entry.container}; refusing to mutate`);
+    }
+    runtime.removeContainer(runner, entry.container);
+    state = 'absent';
   }
+  requireCapabilities(runtime, entry.network === 'restricted');
   const generation = freshGeneration();
   const network = networkName(entry.id);
   const fingerprint = configurationFingerprint([entry.root, entry.image ?? '', options.image, entry.network, ...entry.mounts]);
@@ -65,7 +77,9 @@ export function ensureReady(
   runtime.ensureNetwork(runner, network, entry.id, entry.network === 'restricted');
   if (state !== 'absent') {
     // Cut over by recreating when the image or the network attachment no
-    // longer matches the running container.
+    // longer matches the running container. Runtime switches are already
+    // refused as foreign by containerState, so only image and network
+    // drift recreate here.
     const runningId = runtime.containerImageId(runner, entry.container);
     const desiredId = runtime.referenceImageId(runner, options.image);
     const attached = runtime.containerNetworks(runner, entry.container);
@@ -81,6 +95,7 @@ export function ensureReady(
       mounts: entry.mounts.length > 0 ? entry.mounts : [entry.root],
       homeVolume: entry.homeVolume,
       network,
+      runtimeName: runtime.name,
       generation,
       fingerprint,
     });

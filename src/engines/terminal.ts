@@ -20,6 +20,7 @@ import type { CommandRunner } from '../docker.js';
 
 export interface TerminalEngine {
   readonly name: string;
+  assertWindowName: (name: string) => void;
   sessionAlive: (runner: CommandRunner, session: string) => boolean;
   newSession: (runner: CommandRunner, session: string, window: string, workdir: string, command: ExecSpec) => void;
   newWindow: (runner: CommandRunner, session: string, window: string, workdir: string, command: ExecSpec) => void;
@@ -29,6 +30,7 @@ export interface TerminalEngine {
   respawnWindow: (runner: CommandRunner, session: string, window: string, launch: ExecSpec) => void;
   reattach: (runner: CommandRunner, session: string, insideTmux: boolean) => void;
   killSession: (runner: CommandRunner, session: string) => void;
+  listSessions: (runner: CommandRunner) => string[];
   openAgentWindow: (
     runner: CommandRunner,
     session: string,
@@ -40,6 +42,7 @@ export interface TerminalEngine {
 
 export const TmuxTerminalEngine: TerminalEngine = {
   name: 'tmux',
+  assertWindowName,
   sessionAlive,
   newSession,
   newWindow,
@@ -49,6 +52,11 @@ export const TmuxTerminalEngine: TerminalEngine = {
   respawnWindow,
   reattach: reattachSpec,
   killSession,
+  listSessions: (runner) => {
+    const listed = runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
+    if (listed.status !== 0) return [];
+    return listed.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  },
   openAgentWindow: openWindow,
 };
 

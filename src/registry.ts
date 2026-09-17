@@ -22,6 +22,8 @@ export interface WorkspaceEntry {
   instances: InstanceEntry[];
   homeVolume: string;
   network: NetworkPolicy;
+  /** Container runtime engine that owns this workspace. Foreign runtimes fail closed. */
+  runtime: string;
   mounts: string[];
 }
 
@@ -55,6 +57,11 @@ export function workspaceId(canonicalRoot: string): string {
   return `${basenameOf(canonicalRoot)}-${rootDigest(canonicalRoot)}`;
 }
 
+/** Deterministic resource names derived from the workspace id. */
+export function networkName(workspaceIdValue: string): string {
+  return `sandbox-net-${workspaceIdValue}`;
+}
+
 export function defaultRegistryPath(homeDir: string): string {
   return join(homeDir, '.sandbox', 'registry.json');
 }
@@ -85,6 +92,7 @@ export function loadRegistry(registryPath: string): Registry {
     // Backfill registries written before the network policy existed.
     if (entry.network !== 'open' && entry.network !== 'restricted') entry.network = 'open';
     if (entry.previousImage === undefined) entry.previousImage = null;
+    if (typeof entry.runtime !== 'string' || entry.runtime.length === 0) entry.runtime = 'docker';
   }
   return { version: REGISTRY_VERSION, workspaces };
 }
@@ -142,6 +150,7 @@ export function registerWorkspace(
     instances: [],
     homeVolume: `sandbox-home-${id}`,
     network: 'open',
+    runtime: 'docker',
     mounts: [...mounts],
   };
   registry.workspaces[id] = entry;

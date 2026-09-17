@@ -1,10 +1,14 @@
 import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { assertWindowName } from './terminal.js';
+import { assertSafeName } from './engines/types.js';
 
 export const INSTANCE_ENV_DIR = 'instances';
-export const assertInstanceName = assertWindowName;
+
+/** Instance names double as credential file stems: same charset, file-safe. */
+export function assertInstanceName(instance: string): void {
+  assertSafeName('instance', instance);
+}
 
 export function credentialsDir(homeDir: string, workspaceIdValue: string): string {
   return join(homeDir, '.sandbox', workspaceIdValue, INSTANCE_ENV_DIR);

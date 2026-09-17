@@ -1,7 +1,6 @@
-export interface ExecSpec {
-  command: string;
-  args: string[];
-}
+import type { ExecSpec } from './engines/types.js';
+
+export type { ExecSpec };
 
 export const AGENT_USER = 'agent';
 

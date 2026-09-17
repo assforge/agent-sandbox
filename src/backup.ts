@@ -88,6 +88,7 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     instances: [],
     homeVolume: requiredName(record, 'homeVolume'),
     network: record['network'] === 'restricted' ? 'restricted' : 'open',
+    runtime: typeof record['runtime'] === 'string' && record['runtime'].length > 0 ? (record['runtime'] as string) : 'docker',
     mounts,
   };
   registry.workspaces[id] = entry;

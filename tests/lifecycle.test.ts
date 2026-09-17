@@ -516,6 +516,24 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('selects runtimes and records per-workspace overrides', async () => {
+    const { home, root, deps, out, err } = setup();
+    try {
+      expect(await main(['runtime', 'list'], deps)).toBe(0);
+      expect(out.join('')).toContain('docker (selected)');
+      expect(out.join('')).toContain('apple');
+      expect(await main(['runtime', 'use', 'apple'], deps)).toBe(0);
+      expect(await main(['runtime', 'use', 'nope'], deps)).toBe(2);
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'apple'], deps)).toBe(0);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'nope'], deps)).toBe(2);
+      void err;
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('resolves a git subdirectory to its worktree root', async () => {
     const { home, root, world, deps, out } = setup();
     try {
