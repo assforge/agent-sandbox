@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
-import { agentDefinition, AGENT_DEFINITIONS, outdatedAgents } from '../agent.js';
+import { agentEngine, agentEngines, outdatedEngines } from '../engines/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import {
@@ -19,15 +19,12 @@ import {
 } from '../credentials.js';
 import { parseArgs, UsageError } from '../cli.js';
 import {
-  containerState,
-  ensureVolume,
-  imageExists,
-  listManagedContainers,
   networkName,
-  removeContainer,
   type CommandRunner,
   type RunResult,
 } from '../docker.js';
+import { runtimeEngine } from '../engines/runtime.js';
+import { terminalEngine } from '../engines/terminal.js';
 import { buildCandidate, activateImage, rollbackImage } from '../image.js';
 import { acquireLock } from '../lock.js';
 import { CONTAINER_WORKDIR, ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
@@ -43,7 +40,7 @@ import {
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { dockerExec } from '../session.js';
-import { openAgentWindow, paneAlive, reattach, sessionAlive, assertWindowName, killSession } from '../terminal.js';
+import { assertWindowName } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, credentialsHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
 
@@ -55,6 +52,13 @@ export class CliError extends Error {
     super(message);
   }
 }
+
+// Engine selection is hardcoded to the verified engines in slice 1.
+// Host-level selection with per-workspace override arrives in slice 3;
+// the call sites below already speak only the interfaces.
+const rt = runtimeEngine('docker');
+const term = terminalEngine('tmux');
+const agents = agentEngines();
 
 export interface MainDeps {
   cwd: string;
@@ -282,22 +286,22 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (!entry.instances.some((item) => item.name === name)) {
           entry.instances.push({ name, kind: 'shell', window: name });
           saveRegistry(registryPathOf(deps), registry);
         }
         const launchEnv = launchEnvFor(deps, entry, name);
         ensureInstanceHome(deps.runner, entry.container, name);
-        openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnv), entry.root);
+        term.openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnv), entry.root);
       } finally {
         handle.release();
       }
-      if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
     }
     case 'agent': {
-      const def = agentDefinition(parsed.agent);
+      const def = agentEngine(agents, parsed.agent);
       const name = parsed.name ?? parsed.agent;
       try {
         assertWindowName(name);
@@ -315,14 +319,14 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const handle = acquireLock(deps.lockDir, entry.id);
       let launched: string;
       try {
-        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (!same) {
           entry.instances.push({ name, kind: parsed.agent, window: name });
           saveRegistry(registryPathOf(deps), registry);
         }
         const launchEnv = launchEnvFor(deps, entry, name);
         ensureInstanceHome(deps.runner, entry.container, name);
-        launched = openAgentWindow(
+        launched = term.openAgentWindow(
           deps.runner,
           entry.session,
           name,
@@ -333,7 +337,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         handle.release();
       }
       deps.stdout(`${launched} window ${name} (${parsed.agent}) in session ${entry.session}\n`);
-      if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
     }
     case 'workspace':
@@ -382,8 +386,8 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   if (!entry) {
     throw new CliError(`workspace is not registered: ${root}`, 1);
   }
-  let state = containerState(deps.runner, entry.container, entry.id);
-  const alive = sessionAlive(deps.runner, entry.session);
+  let state = rt.containerState(deps.runner, entry.container, entry.id);
+  const alive = term.sessionAlive(deps.runner, entry.session);
   const live = state === 'running' || alive || entry.instances.length > 0;
   if (live) {
     const approved = await deps.confirm(
@@ -394,11 +398,11 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   const handle = acquireLock(deps.lockDir, entry.id);
   try {
     if (state === 'running') {
-      stopWorkspace(deps.runner, entry);
+      stopWorkspace(deps.runner, rt, entry);
       state = 'stopped';
     }
-    if (state === 'stopped') removeContainer(deps.runner, entry.container);
-    if (sessionAlive(deps.runner, entry.session)) killSession(deps.runner, entry.session);
+    if (state === 'stopped') rt.removeContainer(deps.runner, entry.container);
+    if (term.sessionAlive(deps.runner, entry.session)) term.killSession(deps.runner, entry.session);
     delete registry.workspaces[entry.id];
     saveRegistry(registryPathOf(deps), registry);
     deps.stdout(`unregistered ${entry.id}; volumes, networks, images, and credentials kept\n`);
@@ -408,10 +412,10 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   }
 }/** Roster windows with no live pane. Empty when the session is absent. */
 function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
-  if (!sessionAlive(deps.runner, entry.session)) return [];
+  if (!term.sessionAlive(deps.runner, entry.session)) return [];
   const dead: string[] = [];
   for (const instance of entry.instances) {
-    if (!paneAlive(deps.runner, entry.session, instance.window)) dead.push(instance.window);
+    if (!term.paneAlive(deps.runner, entry.session, instance.window)) dead.push(instance.window);
   }
   return dead;
 }
@@ -449,8 +453,8 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'status': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
-      const state = containerState(deps.runner, entry.container, entry.id);
-      const alive = sessionAlive(deps.runner, entry.session);
+      const state = rt.containerState(deps.runner, entry.container, entry.id);
+      const alive = term.sessionAlive(deps.runner, entry.session);
       const windows = alive
         ? deps.runner.run('tmux', ['list-windows', '-t', entry.session, '-F', '#{window_name}']).stdout.split('\n').map((line) => line.trim())
         : [];
@@ -485,7 +489,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         deps.stdout(`workspace ${entry.id} ready (container ${entry.container})\n`);
         return 0;
       } finally {
@@ -500,7 +504,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        stopWorkspace(deps.runner, entry);
+        stopWorkspace(deps.runner, rt, entry);
         deps.stdout(`workspace ${entry.id} stopped; volumes kept\n`);
         return 0;
       } finally {
@@ -509,21 +513,20 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'attach': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
-      if (!sessionAlive(deps.runner, entry.session)) {
+      if (!term.sessionAlive(deps.runner, entry.session)) {
         throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
-      const state = containerState(deps.runner, entry.container, entry.id);
+      const state = rt.containerState(deps.runner, entry.container, entry.id);
       if (state !== 'running') {
         deps.stderr(`warning: container ${entry.container} is ${state}; windows will be dead. Run: sandbox workspace start\n`);
       }
-      reattach(deps.runner, entry.session, deps.insideTmux);
+      term.reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
     }
-    case 'logs': {
-      const entry = await resolveAndEnsure(deps, registry, workspace);
+    case 'logs': {      const entry = await resolveAndEnsure(deps, registry, workspace);
       const tail = takeRestOption(rest, ['--tail']) ?? '50';
       if (!/^\d+$/.test(tail)) throw new UsageError('workspace logs --tail must be a number');
-      const state = containerState(deps.runner, entry.container, entry.id);
+      const state = rt.containerState(deps.runner, entry.container, entry.id);
       if (state === 'absent' || state === 'foreign') {
         throw new CliError(`no container for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
@@ -537,9 +540,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const noAttach = rest.includes('--no-attach');
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (entry.instances.length === 0) {
-          openAgentWindow(deps.runner, entry.session, 'shell', dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnvFor(deps, entry, 'shell')), entry.root);
+          term.openAgentWindow(deps.runner, entry.session, 'shell', dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnvFor(deps, entry, 'shell')), entry.root);
           deps.stdout('reopened shell window (no instances registered)\n');
         }
         for (const instance of entry.instances) {
@@ -548,7 +551,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
             launchArgv = ['bash'];
           } else {
             try {
-              launchArgv = agentDefinition(instance.kind).launch;
+              launchArgv = agentEngine(agents, instance.kind).launch;
             } catch {
               deps.stdout(`skip window ${instance.name}: unknown agent kind ${instance.kind}\n`);
               continue;
@@ -556,13 +559,13 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
           }
           const launch = dockerExec(entry.container, CONTAINER_WORKDIR, launchArgv, 'agent', true, launchEnvFor(deps, entry, instance.name));
           ensureInstanceHome(deps.runner, entry.container, instance.name);
-          const outcome = openAgentWindow(deps.runner, entry.session, instance.window, launch, entry.root);
+          const outcome = term.openAgentWindow(deps.runner, entry.session, instance.window, launch, entry.root);
           deps.stdout(`${outcome} window ${instance.name} (${instance.kind})\n`);
         }
       } finally {
         handle.release();
       }
-      if (!noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+      if (!noAttach) term.reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
     }
     case 'exec': {
@@ -572,7 +575,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (command.length === 0) throw new UsageError('workspace exec requires -- <command>');
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         const spec = dockerExec(entry.container, CONTAINER_WORKDIR, command, 'agent', deps.stdinIsTTY);
         const result = deps.runner.run(spec.command, spec.args);
         if (result.stdout) deps.stdout(result.stdout);
@@ -704,7 +707,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         let copied = 0;
         for (const mapping of plan.mappings) {
           if (!mapping.copiesState || mapping.legacy.kind !== 'volume') continue;
-          ensureVolume(deps.runner, mapping.destination, entry.id);
+          rt.ensureVolume(deps.runner, mapping.destination, entry.id);
           const result = deps.runner.run('docker', [
             'run', '--rm',
             '-v', `${mapping.legacy.name}:/from:ro`,
@@ -733,17 +736,21 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       deps.stdout(agentHelp());
       return 0;
     case 'list': {
+      const listed = [...agents.values()].map((engine) => {
+        const spec = engine.installSpec();
+        return { name: engine.name, npmPackage: spec.npmPackage, pinnedVersion: spec.pinnedVersion, statePaths: engine.statePaths, launch: engine.launch };
+      });
       if (rest.includes('--json')) {
-        deps.stdout(`${JSON.stringify({ agents: AGENT_DEFINITIONS }, null, 2)}\n`);
+        deps.stdout(`${JSON.stringify({ agents: listed }, null, 2)}\n`);
         return 0;
       }
-      for (const def of AGENT_DEFINITIONS) {
-        deps.stdout(`${def.name}: ${def.npmPackage ?? 'native'}@${def.pinnedVersion}\n`);
+      for (const item of listed) {
+        deps.stdout(`${item.name}: ${item.npmPackage ?? 'native'}@${item.pinnedVersion ?? 'native'}\n`);
       }
       return 0;
     }
     case 'outdated': {
-      const entries = outdatedAgents({
+      const entries = outdatedEngines({
         installedVersion: (pkg) => {
           const result = deps.runner.run('npm', ['ls', '-g', pkg, '--depth=0', '--json']);
           if (result.status !== 0) return null;
@@ -761,7 +768,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
           const version = result.stdout.trim();
           return version || null;
         },
-      });
+      }, agents.values());
       if (rest.includes('--json')) {
         deps.stdout(`${JSON.stringify({ agents: entries }, null, 2)}\n`);
         return 0;
@@ -774,25 +781,26 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
     case 'upgrade': {
       const target = rest[0];
       if (!target) throw new UsageError('agent upgrade requires <agent|all>');
-      const names = target === 'all' ? AGENT_DEFINITIONS.map((def) => def.name) : [target];
+      const names = target === 'all' ? [...agents.keys()] : [target];
       const overrides: Record<string, string> = {};
       const defs = names.map((name) => {
         try {
-          return agentDefinition(name);
+          return agentEngine(agents, name);
         } catch (error) {
           throw new CliError((error as Error).message, 1);
         }
       });
       for (const def of defs) {
-        if (!def.npmPackage) {
+        const spec = def.installSpec();
+        if (spec.channel !== 'npm' || !spec.npmPackage || !spec.pinnedVersion) {
           deps.stdout(`${def.name} is native and has no npm upgrade channel\n`);
           continue;
         }
-        const probed = deps.runner.run('npm', ['view', def.npmPackage, 'version']);
+        const probed = deps.runner.run('npm', ['view', spec.npmPackage, 'version']);
         const latest = probed.status === 0 ? probed.stdout.trim() : '';
-        if (!latest) throw new CliError(`cannot resolve latest version for ${def.npmPackage}`, 1);
-        overrides[def.npmPackage] = latest;
-        deps.stdout(`${def.name}: pinned ${def.pinnedVersion}, latest ${latest}\n`);
+        if (!latest) throw new CliError(`cannot resolve latest version for ${spec.npmPackage}`, 1);
+        overrides[spec.npmPackage] = latest;
+        deps.stdout(`${def.name}: pinned ${spec.pinnedVersion}, latest ${latest}\n`);
       }
       if (Object.keys(overrides).length === 0) return 0;
       const contextDir = new URL('../../templates', import.meta.url).pathname;
@@ -826,6 +834,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
         },
         contextDir,
         tag,
+        agents.values(),
         overrides,
       );
       deps.stdout(`upgrade candidate ${built.tag} verified; running sessions are untouched.\nActivate explicitly with: sandbox image activate ${built.tag}\n`);
@@ -927,7 +936,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       deps.stdout(imageHelp());
       return 0;
     case 'list': {
-      const containers = listManagedContainers(deps.runner);
+      const containers = rt.listManagedContainers(deps.runner);
       const entries = Object.values(registry.workspaces).map((entry) => ({ id: entry.id, image: entry.image, container: entry.container }));
       if (rest.includes('--json')) {
         deps.stdout(`${JSON.stringify({ images: entries, containers }, null, 2)}\n`);
@@ -977,6 +986,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
         },
         contextDir,
         tag,
+        agents.values(),
       );
       deps.stdout(`candidate ${built.tag} verified; activate explicitly with: sandbox image activate ${built.tag}\n`);
       return 0;
@@ -984,7 +994,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
     case 'activate': {
       const digest = rest[0];
       if (!digest) throw new UsageError('image activate requires <digest>');
-      if (!imageExists(deps.runner, digest)) throw new CliError(`image not found locally: ${digest}`, 1);
+      if (!rt.imageExists(deps.runner, digest)) throw new CliError(`image not found locally: ${digest}`, 1);
       const entry = await resolveAndEnsure(deps, registry, workspace);
       if (entry.instances.length > 0) {
         const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Activate?`);

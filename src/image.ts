@@ -1,4 +1,4 @@
-import { AGENT_DEFINITIONS } from './agent.js';
+import type { AgentEngine } from './engines/agent.js';
 import type { WorkspaceEntry } from './registry.js';
 
 export interface ImageBuildPlan {
@@ -18,15 +18,17 @@ export function buildCandidate(
   runner: ImageRunner,
   contextDir: string,
   candidateTag: string,
+  engines: Iterable<AgentEngine>,
   versionOverrides: Record<string, string> = {},
 ): { tag: string; versions: Record<string, string> } {
   const buildArgs: Record<string, string> = {};
   const expected: Record<string, string> = {};
-  for (const def of AGENT_DEFINITIONS) {
-    if (!def.npmPackage) continue;
-    const version = versionOverrides[def.npmPackage] ?? def.pinnedVersion;
-    buildArgs[`${def.name.toUpperCase()}_VERSION`] = version;
-    expected[def.npmPackage] = version;
+  for (const engine of engines) {
+    const spec = engine.installSpec();
+    if (spec.channel !== 'npm' || !spec.npmPackage || !spec.pinnedVersion) continue;
+    const version = versionOverrides[spec.npmPackage] ?? spec.pinnedVersion;
+    buildArgs[`${engine.name.toUpperCase()}_VERSION`] = version;
+    expected[spec.npmPackage] = version;
   }
   const tag = runner.buildImage({ contextDir, tag: candidateTag, buildArgs });
   const versions = runner.inspectBinaryVersions(tag);
