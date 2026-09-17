@@ -48,6 +48,13 @@ export function reattach(runner: CommandRunner, session: string, insideTmux: boo
   }
 }
 
+/** Instance names travel inside tmux target syntax (session:window). */
+export function assertWindowName(name: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || name.includes(':')) {
+    throw new Error(`invalid instance name: ${name}; use letters, digits, dot, underscore, or hyphen`);
+  }
+}
+
 /** Open an agent window: reuse the live window, create it, then select it. */
 export function openAgentWindow(
   runner: CommandRunner,
@@ -57,6 +64,7 @@ export function openAgentWindow(
   hostWorkdir: string,
 ): 'reused' | 'created' {
   if (!sessionAlive(runner, session)) {
+    assertWindowName(window);
     newSession(runner, session, window, hostWorkdir, launch);
     return 'created';
   }
@@ -64,6 +72,7 @@ export function openAgentWindow(
     selectWindow(runner, session, window);
     return 'reused';
   }
+  assertWindowName(window);
   newWindow(runner, session, window, hostWorkdir, launch);
   selectWindow(runner, session, window);
   return 'created';

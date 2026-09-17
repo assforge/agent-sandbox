@@ -407,6 +407,28 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('resolves a git subdirectory to its worktree root', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      const gitDeps = {
+        ...deps,
+        cwd: join(root, 'packages', 'app'),
+        runner: {
+          run: (command: string, args: string[]) => {
+            if (command === 'git') return { status: 0, stdout: `${root}\n`, stderr: '' };
+            return world.run(command, args);
+          },
+        },
+      };
+      expect(await main(['workspace', 'status'], gitDeps)).toBe(0);
+      expect(out.join('')).toContain(root);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('copies state volumes on migrate apply and guards the root mount', async () => {
     const { home, root, world, deps, out, err } = setup();
     try {
@@ -433,6 +455,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['codex', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('reused window codex');
       expect(await main(['claude', '--name', 'codex', '--workspace', root], deps)).toBe(1);
+      expect(await main(['claude', '--name', 'bad:name', '--workspace', root], deps)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });

@@ -42,6 +42,9 @@ export function acquireLock(lockDir: string, workspaceIdValue: string, timeoutMs
   if (!lockDir.startsWith('/') || lockDir.split('/').includes('..')) {
     throw new Error(`refused lock directory: ${lockDir}`);
   }
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(workspaceIdValue)) {
+    throw new Error(`refused lock identity: ${workspaceIdValue}`);
+  }
   mkdirSync(lockDir, { recursive: true });
   const path = lockPath(lockDir, workspaceIdValue);
   const deadline = Date.now() + timeoutMs;
