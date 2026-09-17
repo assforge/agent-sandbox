@@ -481,6 +481,19 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('registers through the short top-level shortcut', async () => {
+    const { home, root, deps, out } = setup();
+    try {
+      const cwdDeps = { ...deps, cwd: root };
+      expect(await main(['register'], cwdDeps)).toBe(0);
+      expect(out.join('')).toContain('registered');
+      expect(loadRegistry(join(home, '.sandbox', 'registry.json')).workspaces).not.toEqual({});
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('resolves a git subdirectory to its worktree root', async () => {
     const { home, root, world, deps, out } = setup();
     try {
