@@ -11,15 +11,16 @@ import { emptyRegistry, loadRegistry, registerWorkspace } from '../src/registry.
 /** Scripted docker+tmux world. Captures env from docker run; serves ready.json accordingly. */
 class FakeWorld {
   calls: string[][] = [];
-  containers = new Map<string, { running: boolean; owner: string; generation: string; fingerprint: string; startedAt: number; imageId: string }>();
+  containers = new Map<string, { running: boolean; owner: string; generation: string; fingerprint: string; startedAt: number; imageId: string; network: string }>();
   volumes = new Set<string>();
+  networks = new Map<string, boolean>();
   sessions = new Map<string, Set<string>>();
   images = new Set<string>(['sandbox-workspace:current']);
 
   imageIdOf = (image: string): string => `id-of-${image}`;
 
   seedLegacy(): void {
-    this.containers.set('pedantic_snyder', { running: true, owner: 'legacy', generation: '', fingerprint: '', startedAt: 0, imageId: 'legacy-img' });
+    this.containers.set('pedantic_snyder', { running: true, owner: 'legacy', generation: '', fingerprint: '', startedAt: 0, imageId: 'legacy-img', network: '' });
     for (const volume of ['claude-relay-config', 'claude-relay-codex', 'claude-relay-xdg']) {
       this.volumes.add(volume);
     }
@@ -56,12 +57,40 @@ class FakeWorld {
       }
       return { status: 0, stdout: names.join('\n'), stderr: '' };
     }
+    if (verb === 'network' && rest[0] === 'ls') {
+      const filterIndex = rest.indexOf('--filter');
+      let names = [...this.networks.keys()];
+      if (filterIndex >= 0) {
+        const filter = rest[filterIndex + 1] as string;
+        const match = /^name=\^(.+)\$$/.exec(filter);
+        if (match) names = names.filter((name) => name === match[1]);
+      }
+      return { status: 0, stdout: names.join('\n'), stderr: '' };
+    }
+    if (verb === 'network' && rest[0] === 'create') {
+      this.networks.set(rest[rest.length - 1] as string, rest.includes('--internal'));
+      return { status: 0, stdout: 'netid', stderr: '' };
+    }
+    if (verb === 'network' && rest[0] === 'inspect') {
+      const format = rest[rest.indexOf('--format') + 1] as string;
+      if (format.includes('len .Containers')) return { status: 0, stdout: '0', stderr: '' };
+      const internal = this.networks.get(rest[rest.length - 1] as string);
+      return { status: 0, stdout: internal === true ? 'true' : 'false', stderr: '' };
+    }
+    if (verb === 'network' && rest[0] === 'rm') {
+      this.networks.delete(rest[rest.length - 1] as string);
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (verb === 'inspect' && rest[0] === '--format') {
       const format = rest[1] as string;
       const name = rest[rest.length - 1] as string;
       if (format === '{{.Image}}') {
         const container = this.containers.get(name);
         return container ? { status: 0, stdout: container.imageId, stderr: '' } : { status: 1, stdout: '', stderr: 'no such' };
+      }
+      if (format.startsWith('{{range')) {
+        const container = this.containers.get(name);
+        return container ? { status: 0, stdout: container.network, stderr: '' } : { status: 1, stdout: '', stderr: 'no such' };
       }
       const container = this.containers.get(name);
       if (!container) return { status: 1, stdout: '', stderr: 'No such container' };
@@ -92,6 +121,8 @@ class FakeWorld {
         }
       }
       const image = rest[rest.length - 3] as string;
+      const networkIndex = rest.indexOf('--network');
+      const network = networkIndex >= 0 ? (rest[networkIndex + 1] as string) : '';
       this.containers.set(name, {
         running: true,
         owner,
@@ -99,6 +130,7 @@ class FakeWorld {
         fingerprint: env['SANDBOX_CONFIG_FINGERPRINT'] ?? '',
         startedAt: Math.floor(Date.now() / 1000),
         imageId: this.imageIdOf(image),
+        network,
       });
       return { status: 0, stdout: 'cid', stderr: '' };
     }
@@ -243,9 +275,9 @@ describe('container state detection', () => {
   it('reports absent, running, and foreign distinctly', () => {
     const world = new FakeWorld();
     expect(containerState(world, 'missing', 'w')).toBe('absent');
-    world.containers.set('mine', { running: true, owner: 'w', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img' });
+    world.containers.set('mine', { running: true, owner: 'w', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img', network: 'net' });
     expect(containerState(world, 'mine', 'w')).toBe('running');
-    world.containers.set('theirs', { running: true, owner: 'other', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img' });
+    world.containers.set('theirs', { running: true, owner: 'other', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img', network: 'net' });
     expect(containerState(world, 'theirs', 'w')).toBe('foreign');
   });
 });
@@ -283,7 +315,7 @@ describe('workspace lifecycle flows', () => {
       expect(err.join('')).toMatch(/no image selected/);
       const registry = emptyRegistry();
       const entry = registerWorkspace(registry, root, [root]);
-      world.containers.set(entry.container, { running: true, owner: 'someone-else', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img' });
+      world.containers.set(entry.container, { running: true, owner: 'someone-else', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img', network: 'net' });
       expect(containerState(world, entry.container, entry.id)).toBe('foreign');
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -342,6 +374,33 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['agent', 'upgrade', 'codex'], deps)).toBe(0);
       expect(out.join('')).toContain('Activate explicitly');
       expect(await main(['agent', 'upgrade', 'nope'], deps)).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('creates an internal network for restricted workspaces and recreates on policy switch', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--network', 'restricted'], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const net = `sandbox-net-${id}`;
+      expect(world.networks.has(net)).toBe(true);
+      const createCall = world.calls.find((call) => call.includes('network') && call.includes('create'));
+      expect(createCall).toContain('--internal');
+      const runCall = world.calls.find((call) => call[0] === 'docker' && call[1] === 'run');
+      expect(runCall).toContain('--cap-drop');
+      expect(runCall).toContain(net);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--network', 'open'], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      expect(world.containers.get(`sandbox-${id}`)?.network).toBe(net);
+      expect(out.join('')).toContain('switch network');
+      expect(await main(['workspace', 'configure', '--workspace', root, '--network', 'wide'], deps)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });

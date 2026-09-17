@@ -21,7 +21,14 @@ function hintInstallTmux(platform: NodeJS.Platform): string {
   return 'Install tmux with your platform package manager, then run this check again';
 }
 
-export function runDoctor(env: ProbeEnv, selectedImage: string | null): DoctorCheck[] {
+export interface WorkspacePosture {
+  image: string | null;
+  /** Null when no workspace is in scope: the network check is skipped. */
+  network: 'open' | 'restricted' | null;
+  networkExists: boolean;
+}
+
+export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   const major = Number(env.nodeVersion.replace(/^v/, '').split('.')[0]);
   checks.push({
@@ -65,10 +72,37 @@ export function runDoctor(env: ProbeEnv, selectedImage: string | null): DoctorCh
   checks.push({
     id: 'workspace-image',
     group: 'Workspace',
-    status: selectedImage ? 'ok' : 'warn',
-    summary: selectedImage ? `Selected image digest ${selectedImage}` : 'No image has been selected for this workspace',
-    remediation: selectedImage ? undefined : 'Run: sandbox image build',
+    status: posture.image ? 'ok' : 'warn',
+    summary: posture.image ? `Selected image digest ${posture.image}` : 'No image has been selected for this workspace',
+    remediation: posture.image ? undefined : 'Run: sandbox image build',
   });
+  if (posture.network === null) {
+    return checks;
+  }
+  if (!posture.networkExists) {
+    checks.push({
+      id: 'workspace-network',
+      group: 'Workspace',
+      status: 'fail',
+      summary: 'The workspace network does not exist; start the workspace to create it',
+      remediation: 'Run: sandbox workspace start',
+    });
+  } else if (posture.network === 'restricted') {
+    checks.push({
+      id: 'workspace-network',
+      group: 'Workspace',
+      status: 'ok',
+      summary: 'Egress is restricted to the workspace network (no external route)',
+    });
+  } else {
+    checks.push({
+      id: 'workspace-network',
+      group: 'Workspace',
+      status: 'warn',
+      summary: 'Egress is unrestricted on the workspace network',
+      remediation: 'Run: sandbox workspace configure --network restricted',
+    });
+  }
   return checks;
 }
 

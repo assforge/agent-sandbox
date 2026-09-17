@@ -10,6 +10,8 @@ export interface InstanceEntry {
   window: string;
 }
 
+export type NetworkPolicy = 'open' | 'restricted';
+
 export interface WorkspaceEntry {
   id: string;
   root: string;
@@ -19,6 +21,7 @@ export interface WorkspaceEntry {
   session: string;
   instances: InstanceEntry[];
   homeVolume: string;
+  network: NetworkPolicy;
   mounts: string[];
 }
 
@@ -77,7 +80,13 @@ export function loadRegistry(registryPath: string): Registry {
   if (record.version !== REGISTRY_VERSION || typeof record.workspaces !== 'object' || record.workspaces === null) {
     throw new Error(`registry has an unsupported version or shape: ${registryPath}`);
   }
-  return { version: REGISTRY_VERSION, workspaces: record.workspaces as Registry['workspaces'] };
+  const workspaces = record.workspaces as Registry['workspaces'];
+  for (const entry of Object.values(workspaces)) {
+    // Backfill registries written before the network policy existed.
+    if (entry.network !== 'open' && entry.network !== 'restricted') entry.network = 'open';
+    if (entry.previousImage === undefined) entry.previousImage = null;
+  }
+  return { version: REGISTRY_VERSION, workspaces };
 }
 
 export function saveRegistry(registryPath: string, registry: Registry): void {
@@ -132,6 +141,7 @@ export function registerWorkspace(
     session: `sandbox-${id}`,
     instances: [],
     homeVolume: `sandbox-home-${id}`,
+    network: 'open',
     mounts: [...mounts],
   };
   registry.workspaces[id] = entry;
