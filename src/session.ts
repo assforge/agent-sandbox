@@ -6,12 +6,11 @@ export interface ExecSpec {
 export const AGENT_USER = 'agent';
 
 /** Fixed docker exec vector. No shell is involved, so user input is never re-evaluated. */
-export function dockerExec(container: string, workdir: string, argv: string[], user: string = AGENT_USER): ExecSpec {
-  return { command: 'docker', args: ['exec', '-i', '-t', '-u', user, '-w', workdir, container, ...argv] };
-}
-
-export function tmuxHasSession(session: string): ExecSpec {
-  return { command: 'tmux', args: ['has-session', '-t', session] };
+export function dockerExec(container: string, workdir: string, argv: string[], user: string = AGENT_USER, tty = true): ExecSpec {
+  const args = ['exec', '-i'];
+  if (tty) args.push('-t');
+  args.push('-u', user, '-w', workdir, container, ...argv);
+  return { command: 'docker', args };
 }
 
 export function tmuxNewWindow(session: string, window: string, workdir: string, command: ExecSpec): ExecSpec {

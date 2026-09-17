@@ -21,6 +21,6 @@ mkdir -p \
   "$HOME/.config/github-copilot" \
   "$HOME/work"
 
-printf '{"generation":"%s","fingerprint":"%s"}\n' "$GENERATION" "$FINGERPRINT" > "$READY_DIR/ready.json"
+printf '{"generation":"%s","fingerprint":"%s","started_at":%s}\n' "$GENERATION" "$FINGERPRINT" "$(date +%s)" > "$READY_DIR/ready.json"
 
 exec "$@"

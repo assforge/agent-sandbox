@@ -2,37 +2,98 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
+import { agentDefinition, AGENT_DEFINITIONS, outdatedAgents } from '../agent.js';
+import { backupWorkspace } from '../backup.js';
+import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import { parseArgs, UsageError } from '../cli.js';
-import { defaultRegistryPath, loadRegistry, lookupWorkspace } from '../registry.js';
-import { resolveWorkspace } from '../resolve.js';
+import {
+  containerState,
+  imageExists,
+  listManagedContainers,
+  type CommandRunner,
+  type RunResult,
+} from '../docker.js';
+import { buildCandidate, activateImage, rollbackImage } from '../image.js';
+import { acquireLock } from '../lock.js';
+import { CONTAINER_WORKDIR, ensureReady, stopWorkspace } from '../lifecycle.js';
+import { dryRunMigration } from '../migrate.js';
+import {
+  defaultRegistryPath,
+  loadRegistry,
+  lookupWorkspace,
+  registerWorkspace,
+  saveRegistry,
+  type Registry,
+  type WorkspaceEntry,
+} from '../registry.js';
+import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
+import { dockerExec } from '../session.js';
+import { openAgentWindow, reattach, sessionAlive } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
 
-/** Single source of truth: the package manifest next to dist/. */
-function packageVersion(): string {
-  const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
-  const parsed = JSON.parse(raw) as { version?: unknown };
-  if (typeof parsed.version !== 'string') throw new Error('package.json has no version string');
-  return parsed.version;
+export class CliError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: number,
+  ) {
+    super(message);
+  }
 }
 
 export interface MainDeps {
   cwd: string;
   homeDir: string;
+  lockDir: string;
   platform: NodeJS.Platform;
   nodeVersion: string;
   pathLookup: (name: string) => string | null;
   commandSucceeds: (command: string, args: string[]) => boolean;
+  runner: CommandRunner;
+  insideTmux: boolean;
+  stdinIsTTY: boolean;
+  assumeYes: boolean;
+  confirm: (question: string) => Promise<boolean>;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
 }
 
-export function realDeps(): MainDeps {
+function toRunResult(error: unknown): RunResult {
+  const record = error as { status?: unknown; stdout?: unknown; stderr?: unknown };
+  const text = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (value instanceof Buffer) return value.toString('utf8');
+    return '';
+  };
+  return {
+    status: typeof record.status === 'number' ? record.status : 1,
+    stdout: text(record.stdout),
+    stderr: text(record.stderr),
+  };
+}
+
+export function realRunner(): CommandRunner {
+  return {
+    run: (command: string, args: string[]): RunResult => {
+      try {
+        const stdout = execFileSync(command, args, { encoding: 'utf8', timeout: 120000 });
+        return { status: 0, stdout, stderr: '' };
+      } catch (error) {
+        return toRunResult(error);
+      }
+    },
+  };
+}
+
+export function realDeps(assumeYes: boolean): MainDeps {
+  const runner = realRunner();
   return {
     cwd: process.cwd(),
     homeDir: homedir(),
+    lockDir: `${homedir()}/.sandbox/locks`,
     platform: process.platform,
     nodeVersion: process.version,
     pathLookup: (name: string): string | null => {
@@ -55,6 +116,21 @@ export function realDeps(): MainDeps {
         return false;
       }
     },
+    runner,
+    insideTmux: process.env['TMUX'] !== undefined && process.env['TMUX'] !== '',
+    stdinIsTTY: process.stdin.isTTY ?? false,
+    assumeYes,
+    confirm: async (question: string): Promise<boolean> => {
+      if (assumeYes) return true;
+      if (!process.stdin.isTTY) return false;
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const answer = await new Promise<string>((resolve) => rl.question(`${question} [y/N] `, resolve));
+        return answer.trim().toLowerCase() === 'y';
+      } finally {
+        rl.close();
+      }
+    },
     stdout: (text: string): void => {
       process.stdout.write(text);
     },
@@ -64,17 +140,74 @@ export function realDeps(): MainDeps {
   };
 }
 
-export function main(argv: string[], deps: MainDeps): number {
-  let parsed;
+/** Single source of truth: the package manifest next to dist/. */
+function packageVersion(): string {
+  const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+  const parsed = JSON.parse(raw) as { version?: unknown };
+  if (typeof parsed.version !== 'string') throw new Error('package.json has no version string');
+  return parsed.version;
+}
+
+function registryPathOf(deps: MainDeps): string {
+  return defaultRegistryPath(deps.homeDir);
+}
+
+function loadRegistryOrThrow(deps: MainDeps): Registry {
   try {
-    parsed = parseArgs(argv);
+    return loadRegistry(registryPathOf(deps));
+  } catch (error) {
+    throw new CliError(`cannot read registry: ${(error as Error).message}`, 2);
+  }
+}
+
+async function resolveAndEnsure(
+  deps: MainDeps,
+  registry: Registry,
+  explicitRoot: string | undefined,
+  gitRoot: string | null,
+): Promise<WorkspaceEntry> {
+  const resolution = resolveWorkspace({ explicitRoot, cwd: deps.cwd, registry, gitRoot });
+  const existing = lookupWorkspace(registry, resolution.root);
+  if (existing) return existing;
+  deps.stdout(`workspace is not registered:\n  root: ${resolution.root}\n`);
+  deps.stdout(`plan: register root, create container and host tmux session on first start.\n`);
+  const approved = await deps.confirm('approve this workspace scope?');
+  if (!approved) throw new CliError('workspace scope was not approved; nothing was changed', 1);
+  const canonical = defaultCanonicalize(resolution.root);
+  for (const mount of [canonical]) {
+    const problem = rejectForbiddenMount(mount, deps.homeDir);
+    if (problem) throw new CliError(`refused mount ${mount}: ${problem}`, 2);
+  }
+  const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
+  saveRegistry(registryPathOf(deps), registry);
+  return entry;
+}
+
+function requireImage(entry: WorkspaceEntry): string {
+  if (!entry.image) {
+    throw new CliError(`no image selected for workspace ${entry.id}; run: sandbox image build`, 1);
+  }
+  return entry.image;
+}
+
+export async function main(argv: string[], deps: MainDeps): Promise<number> {
+  try {
+    return await dispatch(argv, deps);
   } catch (error) {
     if (error instanceof UsageError) {
       deps.stderr(`error: ${error.message}\nRun sandbox --help for usage.\n`);
       return error.exitCode;
     }
+    if (error instanceof CliError) {
+      deps.stderr(`error: ${error.message}\n`);
+      return error.exitCode;
+    }
     throw error;
   }
+}
+
+async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
+  const parsed = parseArgs(argv);
   switch (parsed.kind) {
     case 'help':
       deps.stdout(topHelp());
@@ -83,13 +216,7 @@ export function main(argv: string[], deps: MainDeps): number {
       deps.stdout(`sandbox ${packageVersion()}\n`);
       return 0;
     case 'doctor': {
-      let registry;
-      try {
-        registry = loadRegistry(defaultRegistryPath(deps.homeDir));
-      } catch (error) {
-        deps.stderr(`error: cannot read registry: ${(error as Error).message}\n`);
-        return 2;
-      }
+      const registry = loadRegistryOrThrow(deps);
       const resolution = resolveWorkspace({ explicitRoot: parsed.workspace, cwd: deps.cwd, registry });
       const current = resolution.registered ? lookupWorkspace(registry, resolution.root) : null;
       const checks = runDoctor(
@@ -104,39 +231,386 @@ export function main(argv: string[], deps: MainDeps): number {
       deps.stdout(parsed.json ? renderDoctorJson(checks) : renderDoctorText(checks));
       return doctorExitCode(checks);
     }
-    case 'workspace':
-      if (parsed.action === 'help') {
-        deps.stdout(workspaceHelp());
-        return 0;
-      }
-      deps.stderr(`workspace ${parsed.action} is not implemented in this preview.\n`);
-      return 1;
-    case 'agentAdmin':
-      if (parsed.action === 'help') {
-        deps.stdout(agentHelp());
-        return 0;
-      }
-      deps.stderr(`agent ${parsed.action} is not implemented in this preview.\n`);
-      return 1;
-    case 'image':
-      if (parsed.action === 'help') {
-        deps.stdout(imageHelp());
-        return 0;
-      }
-      deps.stderr(`image ${parsed.action} is not implemented in this preview.\n`);
-      return 1;
-    case 'agent':
-      deps.stderr('agent launch requires a ready workspace and is not implemented in this preview.\n');
-      return 1;
     case 'bare':
-    case 'shell':
-      deps.stderr('workspace startup is not implemented in this preview.\n');
-      return 1;
+    case 'shell': {
+      const registry = loadRegistryOrThrow(deps);
+      const entry = await resolveAndEnsure(deps, registry, parsed.workspace, null);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        const name = parsed.kind === 'shell' ? (parsed.name ?? 'shell') : 'shell';
+        openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash']), entry.root);
+        if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'agent': {
+      const registry = loadRegistryOrThrow(deps);
+      const entry = await resolveAndEnsure(deps, registry, parsed.workspace, null);
+      const def = agentDefinition(parsed.agent);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        const name = parsed.name ?? parsed.agent;
+        const same = entry.instances.find((item) => item.name === name);
+        if (same && same.kind !== parsed.agent) {
+          throw new CliError(`instance name is occupied by another agent: ${name} runs ${same.kind}`, 1);
+        }
+        if (!same) {
+          entry.instances.push({ name, kind: parsed.agent, window: name });
+          saveRegistry(registryPathOf(deps), registry);
+        }
+        const launched = openAgentWindow(
+          deps.runner,
+          entry.session,
+          name,
+          dockerExec(entry.container, CONTAINER_WORKDIR, [...def.launch, ...parsed.forwarded]),
+          entry.root,
+        );
+        deps.stdout(`${launched} window ${name} (${parsed.agent}) in session ${entry.session}\n`);
+        if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'workspace':
+      return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
+    case 'agentAdmin':
+      return agentCommand(deps, parsed.action, parsed.rest);
+    case 'image':
+      return imageCommand(deps, parsed.action, parsed.rest, parsed.workspace);
   }
 }
 
-// argv[1] may be a symlink (global installs link bin/ to the package
-// dist). Compare resolved paths so the entry point always fires.
+function takeRestOption(rest: string[], names: string[]): string | undefined {
+  const index = rest.findIndex((arg) => names.includes(arg));
+  if (index < 0) return undefined;
+  const value = rest[index + 1];
+  if (!value) throw new UsageError(`option ${rest[index]} requires a value`);
+  return value;
+}
+
+async function workspaceCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {
+  const registry = loadRegistryOrThrow(deps);
+  switch (action) {
+    case 'help':
+      deps.stdout(workspaceHelp());
+      return 0;
+    case 'list': {
+      const entries = Object.values(registry.workspaces);
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ workspaces: entries.map((entry) => redactedConfig(entry)) }, null, 2)}\n`);
+        return 0;
+      }
+      if (entries.length === 0) {
+        deps.stdout('no workspaces registered\n');
+        return 0;
+      }
+      for (const entry of entries) {
+        deps.stdout(`${entry.id}\n  root: ${entry.root}\n  container: ${entry.container}\n  image: ${entry.image ?? '(none)'}\n`);
+      }
+      return 0;
+    }
+    case 'status': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const state = containerState(deps.runner, entry.container, entry.id);
+      const alive = sessionAlive(deps.runner, entry.session);
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances }, null, 2)}\n`);
+        return 0;
+      }
+      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => `${i.name}(${i.kind})`).join(', ') || '(none)'}\n`);
+      return 0;
+    }
+    case 'register': {
+      const root = takeRestOption(rest, ['--root']);
+      if (!root) throw new UsageError('workspace register requires --root <path>');
+      const canonical = defaultCanonicalize(root);
+      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
+      saveRegistry(registryPathOf(deps), registry);
+      deps.stdout(`registered ${entry.id} for ${canonical}\n`);
+      return 0;
+    }
+    case 'start': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        deps.stdout(`workspace ${entry.id} ready (container ${entry.container})\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'stop': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      if (entry.instances.length > 0) {
+        const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Stop?`);
+        if (!approved) throw new CliError('stop cancelled; nothing was changed', 1);
+      }
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        stopWorkspace(deps.runner, entry);
+        deps.stdout(`workspace ${entry.id} stopped; volumes kept\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'attach': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      if (!sessionAlive(deps.runner, entry.session)) {
+        throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
+      }
+      reattach(deps.runner, entry.session, deps.insideTmux);
+      return 0;
+    }
+    case 'exec': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const separator = rest.indexOf('--');
+      const command = separator >= 0 ? rest.slice(separator + 1) : rest;
+      if (command.length === 0) throw new UsageError('workspace exec requires -- <command>');
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        const spec = dockerExec(entry.container, CONTAINER_WORKDIR, command, 'agent', deps.stdinIsTTY);
+        const result = deps.runner.run(spec.command, spec.args);
+        if (result.stdout) deps.stdout(result.stdout);
+        if (result.stderr) deps.stderr(result.stderr);
+        return result.status;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'configure': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const addMount = takeRestOption(rest, ['--add-mount']);
+      const dropMount = takeRestOption(rest, ['--drop-mount']);
+      if (!addMount && !dropMount) {
+        deps.stdout(`${JSON.stringify(redactedConfig(entry), null, 2)}\n`);
+        return 0;
+      }
+      if (addMount) {
+        const canonical = defaultCanonicalize(addMount);
+        const problem = rejectForbiddenMount(canonical, deps.homeDir);
+        if (problem) throw new CliError(`refused mount ${canonical}: ${problem}`, 2);
+        deps.stdout(`plan: add mount ${canonical} to ${entry.id}\n`);
+      }
+      if (dropMount) deps.stdout(`plan: drop mount ${dropMount} from ${entry.id}\n`);
+      const approved = await deps.confirm('apply these mount changes?');
+      if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
+      if (addMount && !entry.mounts.includes(defaultCanonicalize(addMount))) entry.mounts.push(defaultCanonicalize(addMount));
+      if (dropMount) entry.mounts = entry.mounts.filter((mount) => normalizeLexical(mount) !== normalizeLexical(dropMount));
+      saveRegistry(registryPathOf(deps), registry);
+      return 0;
+    }
+    case 'backup': {
+      const output = takeRestOption(rest, ['--output']);
+      if (!output) throw new UsageError('workspace backup requires --output <path>');
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        const receipt = backupWorkspace(
+          {
+            copyFromContainer: (container, from, to) => {
+              const result = deps.runner.run('docker', ['cp', `${container}:${from}`, to]);
+              if (result.status !== 0) throw new CliError(`backup copy failed: ${result.stderr.trim()}`, 1);
+            },
+            copyToContainer: (container, from, to) => {
+              const result = deps.runner.run('docker', ['cp', from, `${container}:${to}`]);
+              if (result.status !== 0) throw new CliError(`restore copy failed: ${result.stderr.trim()}`, 1);
+            },
+          },
+          entry,
+          output,
+        );
+        deps.stdout(`backup of ${receipt.workspace} written to ${receipt.outputDir}\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'migrate': {
+      const source = takeRestOption(rest, ['--source']);
+      if (source !== 'claude-relay') throw new UsageError('workspace migrate requires --source claude-relay');
+      const apply = rest.includes('--apply');
+      const listed = deps.runner.run('docker', ['ps', '-a', '--format', '{{.Names}}']);
+      const volumes = deps.runner.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
+      const sessions = deps.runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
+      const existing = [
+        ...listed.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'container' as const, name })),
+        ...volumes.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'volume' as const, name })),
+        ...(sessions.status === 0 ? sessions.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'session' as const, name })) : []),
+      ];
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const plan = dryRunMigration(existing, entry.id);
+      deps.stdout(`dry-run: ${plan.mappings.length} legacy resources mapped, originals retained\n`);
+      for (const mapping of plan.mappings) {
+        deps.stdout(`  ${mapping.legacy.kind} ${mapping.legacy.name} -> ${mapping.destination}${mapping.copiesState ? ' (state)' : ''}\n`);
+      }
+      if (!apply) return 0;
+      const approved = await deps.confirm('copy approved agent state and interrupt writers?');
+      if (!approved) throw new CliError('migrate cancelled; nothing was changed', 1);
+      deps.stdout('apply approved: snapshot writers, then copy state volumes (not implemented in this preview)\n');
+      return 0;
+    }
+    default:
+      throw new UsageError(`unknown workspace action: ${action}`);
+  }
+}
+
+async function agentCommand(deps: MainDeps, action: string, rest: string[]): Promise<number> {
+  switch (action) {
+    case 'help':
+      deps.stdout(agentHelp());
+      return 0;
+    case 'list': {
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ agents: AGENT_DEFINITIONS }, null, 2)}\n`);
+        return 0;
+      }
+      for (const def of AGENT_DEFINITIONS) {
+        deps.stdout(`${def.name}: ${def.npmPackage ?? 'native'}@${def.pinnedVersion}\n`);
+      }
+      return 0;
+    }
+    case 'outdated': {
+      const entries = outdatedAgents({
+        installedVersion: (pkg) => {
+          const result = deps.runner.run('npm', ['ls', '-g', pkg, '--depth=0', '--json']);
+          if (result.status !== 0) return null;
+          try {
+            const parsed = JSON.parse(result.stdout) as { dependencies?: Record<string, { version?: unknown }> };
+            const version = parsed.dependencies?.[pkg]?.version;
+            return typeof version === 'string' ? version : null;
+          } catch {
+            return null;
+          }
+        },
+        latestVersion: (pkg) => {
+          const result = deps.runner.run('npm', ['view', pkg, 'version']);
+          if (result.status !== 0) return null;
+          const version = result.stdout.trim();
+          return version || null;
+        },
+      });
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ agents: entries }, null, 2)}\n`);
+        return 0;
+      }
+      for (const item of entries) {
+        deps.stdout(`${item.agent}: installed ${item.installed ?? '(none)'}, pinned ${item.pinned}, latest ${item.latest ?? '(unknown)'}\n`);
+      }
+      return 0;
+    }
+    case 'upgrade': {
+      const target = rest[0];
+      if (!target) throw new UsageError('agent upgrade requires <agent|all>');
+      const names = target === 'all' ? AGENT_DEFINITIONS.map((def) => def.name) : [target];
+      for (const name of names) agentDefinition(name);
+      deps.stdout(`upgrade builds a candidate only; run sandbox image build, then activate explicitly\n`);
+      return 0;
+    }
+    default:
+      throw new UsageError(`unknown agent action: ${action}`);
+  }
+}
+
+async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {
+  const registry = loadRegistryOrThrow(deps);
+  switch (action) {
+    case 'help':
+      deps.stdout(imageHelp());
+      return 0;
+    case 'list': {
+      const containers = listManagedContainers(deps.runner);
+      const entries = Object.values(registry.workspaces).map((entry) => ({ id: entry.id, image: entry.image, container: entry.container }));
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ images: entries, containers }, null, 2)}\n`);
+        return 0;
+      }
+      for (const item of entries) {
+        deps.stdout(`${item.id}: ${item.image ?? '(none)'} (${item.container})\n`);
+      }
+      return 0;
+    }
+    case 'build': {
+      const contextDir = new URL('../../templates', import.meta.url).pathname;
+      const tag = `sandbox-workspace:candidate-${Date.now()}`;
+      const built = buildCandidate(
+        {
+          buildImage: (plan) => {
+            const args = ['build', '-f', `${plan.contextDir}/Dockerfile`];
+            for (const [key, value] of Object.entries(plan.buildArgs)) args.push('--build-arg', `${key}=${value}`);
+            args.push('-t', plan.tag, plan.contextDir);
+            const result = deps.runner.run('docker', args);
+            if (result.status !== 0) throw new CliError(`image build failed: ${result.stderr.trim()}`, 1);
+            return plan.tag;
+          },
+          inspectBinaryVersions: (candidate) => {
+            const probed = deps.runner.run('docker', ['run', '--rm', candidate, 'sh', '-c', 'opencode --version; codex --version; copilot --version']);
+            const versions: Record<string, string> = {};
+            const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+            if (lines[0]) versions['opencode-ai'] = lines[0];
+            if (lines[1]) versions['@openai/codex'] = lines[1].replace(/^codex-cli /, '');
+            if (lines[2]) versions['@github/copilot'] = lines[2].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
+            return versions;
+          },
+          verifyCandidate: (candidate) => {
+            const probed = deps.runner.run('docker', ['run', '--rm', candidate, 'sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
+            return probed.status === 0;
+          },
+        },
+        contextDir,
+        tag,
+      );
+      deps.stdout(`candidate ${built.tag} verified; activate explicitly with: sandbox image activate ${built.tag}\n`);
+      return 0;
+    }
+    case 'activate': {
+      const digest = rest[0];
+      if (!digest) throw new UsageError('image activate requires <digest>');
+      if (!imageExists(deps.runner, digest)) throw new CliError(`image not found locally: ${digest}`, 1);
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      if (entry.instances.length > 0) {
+        const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Activate?`);
+        if (!approved) throw new CliError('activate cancelled; nothing was changed', 1);
+      }
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        const activation = activateImage(entry, digest);
+        saveRegistry(registryPathOf(deps), registry);
+        deps.stdout(`activated ${activation.current} (previous: ${activation.previous ?? '(none)'})\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'rollback': {
+      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        let activation;
+        try {
+          activation = rollbackImage(entry);
+        } catch (error) {
+          throw new CliError((error as Error).message, 1);
+        }
+        saveRegistry(registryPathOf(deps), registry);
+        deps.stdout(`rolled back to ${activation.current}; data migrations are not reversed\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    default:
+      throw new UsageError(`unknown image action: ${action}`);
+  }
+}
+
 function invokedAsMain(): boolean {
   const entry = process.argv[1];
   if (entry === undefined) return false;
@@ -148,5 +622,13 @@ function invokedAsMain(): boolean {
 }
 
 if (invokedAsMain()) {
-  process.exit(main(process.argv.slice(2), realDeps()));
+  const assumeYes = process.argv.includes('--yes') || process.argv.includes('-y');
+  const filtered = process.argv.slice(2).filter((arg) => arg !== '--yes' && arg !== '-y');
+  main(filtered, realDeps(assumeYes)).then(
+    (code) => process.exit(code),
+    (error: unknown) => {
+      process.stderr.write(`error: ${(error as Error).message ?? error}\n`);
+      process.exit(1);
+    },
+  );
 }

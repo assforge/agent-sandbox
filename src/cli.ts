@@ -1,9 +1,9 @@
 export type ParsedCommand =
   | { kind: 'help'; topic?: string }
   | { kind: 'version' }
-  | { kind: 'bare'; workspace?: string }
-  | { kind: 'agent'; agent: string; name?: string; workspace?: string; forwarded: string[] }
-  | { kind: 'shell'; name?: string; workspace?: string }
+  | { kind: 'bare'; workspace?: string; noAttach?: boolean }
+  | { kind: 'agent'; agent: string; name?: string; workspace?: string; forwarded: string[]; noAttach?: boolean }
+  | { kind: 'shell'; name?: string; workspace?: string; noAttach?: boolean }
   | { kind: 'doctor'; json: boolean; workspace?: string }
   | { kind: 'workspace'; action: string; rest: string[]; workspace?: string }
   | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string }
@@ -44,9 +44,10 @@ export function parseArgs(argv: string[]): ParsedCommand {
   const workspace = takeOption(args, ['--workspace']);
   if (takeFlag(args, ['--help', '-h'])) return { kind: 'help' };
   if (takeFlag(args, ['--version', '-V'])) return { kind: 'version' };
+  const noAttach = takeFlag(args, ['--no-attach']);
   if (args.length === 0) {
     if (forwarded.length > 0) throw new UsageError('unexpected -- separator with no command');
-    return { kind: 'bare', workspace };
+    return { kind: 'bare', workspace, noAttach };
   }
   const [first, ...rest] = args;
   if (first === 'shell') {
@@ -54,7 +55,7 @@ export function parseArgs(argv: string[]): ParsedCommand {
     const name = takeOption(rest, ['--name']);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
     if (forwarded.length > 0) throw new UsageError('sandbox shell does not forward arguments');
-    return { kind: 'shell', name, workspace };
+    return { kind: 'shell', name, workspace, noAttach };
   }
   if (first === 'doctor') {
     const json = takeFlag(rest, ['--json']) || forwarded.includes('--json');
@@ -73,7 +74,7 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (rest.length > 2) throw new UsageError(`unexpected argument: ${rest[0]} (use --name for instances, -- for agent arguments)`);
     const name = takeOption(rest, ['--name']);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]} (use -- to forward agent arguments)`);
-    return { kind: 'agent', agent: first, name, workspace, forwarded };
+    return { kind: 'agent', agent: first, name, workspace, forwarded, noAttach };
   }
   throw new UsageError(`unknown command: ${first}`);
 }
