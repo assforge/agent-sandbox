@@ -2,11 +2,12 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 import { agentDefinition, AGENT_DEFINITIONS, outdatedAgents } from '../agent.js';
-import { backupWorkspace } from '../backup.js';
+import { backupWorkspace, restoreWorkspace } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import {
   assertInstanceName,
@@ -280,6 +281,10 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        if (!entry.instances.some((item) => item.name === name)) {
+          entry.instances.push({ name, kind: 'shell', window: name });
+          saveRegistry(registryPathOf(deps), registry);
+        }
         const launchEnv = launchEnvFor(deps, entry, name);
         ensureInstanceHome(deps.runner, entry.container, name);
         openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnv), entry.root);
@@ -348,6 +353,16 @@ function takeRestOption(rest: string[], names: string[]): string | undefined {
   return value;
 }
 
+/** Read the workspace id from a backup manifest without touching the registry. */function peekBackupId(outputDir: string): string {
+  try {
+    const parsed = JSON.parse(readFileSync(join(outputDir, 'workspace.json'), 'utf8')) as { id?: unknown };
+    if (typeof parsed.id !== 'string' || !parsed.id) throw new Error('bad id');
+    return parsed.id;
+  } catch {
+    throw new CliError(`backup is missing or invalid: ${join(outputDir, 'workspace.json')}`, 1);
+  }
+}
+
 async function workspaceCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {
   const registry = loadRegistryOrThrow(deps);
   switch (action) {
@@ -373,11 +388,18 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const state = containerState(deps.runner, entry.container, entry.id);
       const alive = sessionAlive(deps.runner, entry.session);
+      const windows = alive
+        ? deps.runner.run('tmux', ['list-windows', '-t', entry.session, '-F', '#{window_name}']).stdout.split('\n').map((line) => line.trim())
+        : [];
+      const describe = (name: string, kind: string): string => {
+        if (!alive) return `${name}(${kind}, session absent)`;
+        return windows.includes(name) ? `${name}(${kind})` : `${name}(${kind}, window missing)`;
+      };
       if (rest.includes('--json')) {
-        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances }, null, 2)}\n`);
+        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances.map((i) => ({ name: i.name, kind: i.kind, window: windows.includes(i.window) })) }, null, 2)}\n`);
         return 0;
       }
-      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => `${i.name}(${i.kind})`).join(', ') || '(none)'}\n`);
+      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => describe(i.name, i.kind)).join(', ') || '(none)'}\n`);
       return 0;
     }
     case 'register': {
@@ -421,6 +443,52 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
       reattach(deps.runner, entry.session, deps.insideTmux);
+      return 0;
+    }
+    case 'logs': {
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const tail = takeRestOption(rest, ['--tail']) ?? '50';
+      if (!/^\d+$/.test(tail)) throw new UsageError('workspace logs --tail must be a number');
+      const state = containerState(deps.runner, entry.container, entry.id);
+      if (state === 'absent' || state === 'foreign') {
+        throw new CliError(`no container for workspace ${entry.id}; run: sandbox workspace start`, 1);
+      }
+      const result = deps.runner.run('docker', ['logs', '--tail', tail, entry.container]);
+      if (result.stdout) deps.stdout(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
+      if (result.stderr) deps.stderr(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);
+      return result.status;
+    }
+    case 'reopen': {
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const noAttach = rest.includes('--no-attach');
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        ensureReady(deps.runner, entry, { image: requireImage(entry) });
+        if (entry.instances.length === 0) {
+          openAgentWindow(deps.runner, entry.session, 'shell', dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnvFor(deps, entry, 'shell')), entry.root);
+          deps.stdout('reopened shell window (no instances registered)\n');
+        }
+        for (const instance of entry.instances) {
+          let launchArgv: string[];
+          if (instance.kind === 'shell') {
+            launchArgv = ['bash'];
+          } else {
+            try {
+              launchArgv = agentDefinition(instance.kind).launch;
+            } catch {
+              deps.stdout(`skip window ${instance.name}: unknown agent kind ${instance.kind}\n`);
+              continue;
+            }
+          }
+          const launch = dockerExec(entry.container, CONTAINER_WORKDIR, launchArgv, 'agent', true, launchEnvFor(deps, entry, instance.name));
+          ensureInstanceHome(deps.runner, entry.container, instance.name);
+          const outcome = openAgentWindow(deps.runner, entry.session, instance.window, launch, entry.root);
+          deps.stdout(`${outcome} window ${instance.name} (${instance.kind})\n`);
+        }
+      } finally {
+        handle.release();
+      }
+      if (!noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
     }
     case 'exec': {
@@ -478,8 +546,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'backup': {
       const output = takeRestOption(rest, ['--output']);
-      if (!output) throw new UsageError('workspace backup requires --output <path>');
-      const entry = await resolveAndEnsure(deps, registry, workspace);
+      if (!output) throw new UsageError('workspace backup requires --output <path>');      const entry = await resolveAndEnsure(deps, registry, workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         const receipt = backupWorkspace(
@@ -497,6 +564,41 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
           output,
         );
         deps.stdout(`backup of ${receipt.workspace} written to ${receipt.outputDir}\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'restore': {
+      const input = takeRestOption(rest, ['--input']);
+      if (!input) throw new UsageError('workspace restore requires --input <path>');
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const manifestId = peekBackupId(input);
+      if (manifestId !== entry.id) {
+        throw new CliError(`backup belongs to ${manifestId}, not to ${entry.id}; nothing was changed`, 1);
+      }
+      const approved = await deps.confirm(`restore ${entry.id} from ${input}? Running state will be overwritten.`);
+      if (!approved) throw new CliError('restore cancelled; nothing was changed', 1);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        const restored = restoreWorkspace(          {
+            copyFromContainer: (container, from, to) => {
+              const result = deps.runner.run('docker', ['cp', `${container}:${from}`, to]);
+              if (result.status !== 0) throw new CliError(`backup copy failed: ${result.stderr.trim()}`, 1);
+            },
+            copyToContainer: (container, from, to) => {
+              const result = deps.runner.run('docker', ['cp', from, `${container}:${to}`]);
+              if (result.status !== 0) throw new CliError(`restore copy failed: ${result.stderr.trim()}`, 1);
+            },
+          },
+          registry,
+          input,
+        );
+        if (restored.id !== entry.id) {
+          throw new CliError(`backup identity changed during restore; nothing was saved`, 1);
+        }
+        saveRegistry(registryPathOf(deps), registry);
+        deps.stdout(`restored ${restored.id} from ${input}; restart the workspace to cut over\n`);
         return 0;
       } finally {
         handle.release();
@@ -623,14 +725,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       const tag = `sandbox-workspace:upgrade-${Date.now()}`;
       const built = buildCandidate(
         {
-          buildImage: (plan) => {
-            const args = ['build', '-f', `${plan.contextDir}/Dockerfile`];
-            for (const [key, value] of Object.entries(plan.buildArgs)) args.push('--build-arg', `${key}=${value}`);
-            args.push('-t', plan.tag, plan.contextDir);
-            const result = deps.runner.run('docker', args);
-            if (result.status !== 0) throw new CliError(`upgrade build failed: ${result.stderr.trim()}`, 1);
-            return plan.tag;
-          },
+          buildImage: (plan) => dockerBuild(deps.runner, plan),
           inspectBinaryVersions: (candidate) => {
             const probed = deps.runner.run('docker', [
               'run', '--rm',
@@ -735,6 +830,19 @@ async function credentialsCommand(deps: MainDeps, action: string, rest: string[]
   }
 }
 
+function dockerBuild(runner: CommandRunner, plan: { contextDir: string; tag: string; buildArgs: Record<string, string> }): string {
+  const args = ['build', '-f', `${plan.contextDir}/Dockerfile`];
+  for (const [key, value] of Object.entries(plan.buildArgs)) args.push('--build-arg', `${key}=${value}`);
+  args.push('-t', plan.tag, plan.contextDir);
+  const result = runner.run('docker', args);
+  if (result.status !== 0) {
+    const tail = result.stdout.split('\n').map((line) => line.trimEnd()).filter((line) => line.trim().length > 0).slice(-15).join('\n');
+    const detail = [result.stderr.trim(), tail].filter((part) => part.length > 0).join('\n');
+    throw new CliError(`image build failed:\n${detail}`, 1);
+  }
+  return plan.tag;
+}
+
 async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {  const registry = loadRegistryOrThrow(deps);
   switch (action) {
     case 'help':
@@ -757,14 +865,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       const tag = `sandbox-workspace:candidate-${Date.now()}`;
       const built = buildCandidate(
         {
-          buildImage: (plan) => {
-            const args = ['build', '-f', `${plan.contextDir}/Dockerfile`];
-            for (const [key, value] of Object.entries(plan.buildArgs)) args.push('--build-arg', `${key}=${value}`);
-            args.push('-t', plan.tag, plan.contextDir);
-            const result = deps.runner.run('docker', args);
-            if (result.status !== 0) throw new CliError(`image build failed: ${result.stderr.trim()}`, 1);
-            return plan.tag;
-          },
+          buildImage: (plan) => dockerBuild(deps.runner, plan),
           inspectBinaryVersions: (candidate) => {
             const probed = deps.runner.run('docker', [
               'run', '--rm',
@@ -823,6 +924,10 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
     }
     case 'rollback': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      if (entry.instances.length > 0) {
+        const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Roll back?`);
+        if (!approved) throw new CliError('rollback cancelled; nothing was changed', 1);
+      }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         let activation;

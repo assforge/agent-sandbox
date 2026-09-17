@@ -16,6 +16,7 @@ class FakeWorld {
   networks = new Map<string, boolean>();
   sessions = new Map<string, Set<string>>();
   images = new Set<string>(['sandbox-workspace:current']);
+  failBuild = false;
 
   imageIdOf = (image: string): string => `id-of-${image}`;
 
@@ -192,7 +193,11 @@ class FakeWorld {
     if (verb === 'ps') {
       return { status: 0, stdout: [...this.containers.keys()].join('\n'), stderr: '' };
     }
-    if (verb === 'build') return { status: 0, stdout: 'built', stderr: '' };
+    if (verb === 'build') {
+      if (this.failBuild) return { status: 1, stdout: 'STEP 3/9 failed\nboom\n', stderr: 'error' };
+      return { status: 0, stdout: 'built', stderr: '' };
+    }
+    if (verb === 'logs') return { status: 0, stdout: 'entrypoint line 1\nready written\n', stderr: '' };
     return { status: 0, stdout: '', stderr: '' };
   }
 
@@ -407,7 +412,55 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
-  it('resolves a git subdirectory to its worktree root', async () => {    const { home, root, world, deps, out } = setup();
+  it('confirms rollback with live instances and restores from backup', async () => {
+    const { home, root, world, deps, out, err } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      world.images.add('sandbox-workspace:next');
+      expect(await main(['image', 'activate', 'sandbox-workspace:next', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const deny = { ...deps, assumeYes: false, confirm: async () => false };
+      expect(await main(['image', 'rollback', '--workspace', root], deny)).toBe(1);
+      expect(await main(['image', 'rollback', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('rolled back');
+      const backupDir = join(home, 'backup');
+      expect(await main(['workspace', 'backup', '--workspace', root, '--output', backupDir], deps)).toBe(0);
+      expect(await main(['workspace', 'restore', '--workspace', root, '--input', backupDir], deps)).toBe(0);
+      expect(out.join('')).toContain('restart the workspace');
+      expect(await main(['workspace', 'restore', '--workspace', root, '--input', join(home, 'missing')], deps)).toBe(1);
+      expect(await main(['workspace', 'logs', '--workspace', root, '--tail', '10'], deps)).toBe(0);
+      expect(out.join('')).toContain('ready written');
+      expect(await main(['workspace', 'logs', '--workspace', root, '--tail', 'x'], deps)).toBe(2);
+      void err;
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reopens every registered window and reports liveness', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      expect(await main(['shell', '--workspace', root, '--name', 'ops', '--no-attach'], deps)).toBe(0);
+      expect(await main(['workspace', 'reopen', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      expect(out.join('')).toContain('reused window codex');
+      expect(await main(['workspace', 'status', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('codex(codex)');
+      world.failBuild = true;
+      expect(await main(['image', 'build'], deps)).toBe(1);
+      expect(out.join('')).not.toContain('verified');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a git subdirectory to its worktree root', async () => {
+    const { home, root, world, deps, out } = setup();
     try {
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       const gitDeps = {
