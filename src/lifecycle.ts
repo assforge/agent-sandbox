@@ -1,20 +1,6 @@
 import { checkReadiness, checkRestarted, configurationFingerprint, freshGeneration } from './readiness.js';
-import {
-  containerImageId,
-  containerNetworks,
-  containerState,
-  createContainer,
-  ensureNetwork,
-  networkInternal,
-  networkName,
-  readReadyJson,
-  referenceImageId,
-  removeContainer,
-  sameImageId,
-  startContainer,
-  stopContainer,
-  type CommandRunner,
-} from './docker.js';
+import { networkName, sameImageId, type CommandRunner } from './docker.js';
+import type { RuntimeEngine } from './engines/runtime.js';
 import type { WorkspaceEntry } from './registry.js';
 
 export const CONTAINER_WORKDIR = '/home/agent/work';
@@ -46,13 +32,18 @@ export interface EnsureOptions {
  * (the entrypoint rewrites ready.json on every start). Foreign name
  * owners fail without mutation. A failed startup keeps data but never
  * reports ready and never launches an agent.
+ *
+ * The runtime engine carries every container operation: this function
+ * never names docker directly, so a second runtime plugs in without
+ * touching orchestration.
  */
 export function ensureReady(
   runner: CommandRunner,
+  runtime: RuntimeEngine,
   entry: WorkspaceEntry,
   options: EnsureOptions,
 ): { generation: string; fingerprint: string } {
-  let state = containerState(runner, entry.container, entry.id);
+  let state = runtime.containerState(runner, entry.container, entry.id);
   if (state === 'foreign') {
     throw new Error(`container name is owned by another setup: ${entry.container}; refusing to mutate`);
   }
@@ -65,26 +56,26 @@ export function ensureReady(
     // A policy switch orphans the attached container: it must go before
     // the network itself can be recreated. The switch was confirmed at
     // configure time and disclosed as a recreate-on-next-start.
-    const internal = networkInternal(runner, network);
+    const internal = runtime.networkInternal(runner, network);
     if (internal !== null && internal !== (entry.network === 'restricted')) {
-      removeContainer(runner, entry.container);
+      runtime.removeContainer(runner, entry.container);
       state = 'absent';
     }
   }
-  ensureNetwork(runner, network, entry.id, entry.network === 'restricted');
+  runtime.ensureNetwork(runner, network, entry.id, entry.network === 'restricted');
   if (state !== 'absent') {
     // Cut over by recreating when the image or the network attachment no
     // longer matches the running container.
-    const runningId = containerImageId(runner, entry.container);
-    const desiredId = referenceImageId(runner, options.image);
-    const attached = containerNetworks(runner, entry.container);
+    const runningId = runtime.containerImageId(runner, entry.container);
+    const desiredId = runtime.referenceImageId(runner, options.image);
+    const attached = runtime.containerNetworks(runner, entry.container);
     if ((runningId && desiredId && !sameImageId(runningId, desiredId)) || !attached.includes(network)) {
-      removeContainer(runner, entry.container);
+      runtime.removeContainer(runner, entry.container);
       state = 'absent';
     }
   }
   if (state === 'absent') {
-    createContainer(runner, entry, {
+    runtime.createContainer(runner, entry, {
       image: options.image,
       workdir: CONTAINER_WORKDIR,
       mounts: entry.mounts.length > 0 ? entry.mounts : [entry.root],
@@ -94,7 +85,7 @@ export function ensureReady(
       fingerprint,
     });
     for (let i = 0; i < attempts; i += 1) {
-      const observed = readReadyJson(runner, entry.container);
+      const observed = runtime.readReadyJson(runner, entry.container);
       if (checkReadiness({ generation, fingerprint }, observed, true)) {
         return { generation, fingerprint };
       }
@@ -109,9 +100,9 @@ export function ensureReady(
   // (rerun on every real start) can write a matching fresh file.
   const wasStopped = state === 'stopped';
   const startEpoch = Math.floor(Date.now() / 1000);
-  startContainer(runner, entry.container);
+  runtime.startContainer(runner, entry.container);
   for (let i = 0; i < attempts; i += 1) {
-    const observed = readReadyJson(runner, entry.container);
+    const observed = runtime.readReadyJson(runner, entry.container);
     if (!observed || observed.fingerprint !== fingerprint) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
       continue;
@@ -124,8 +115,8 @@ export function ensureReady(
   throw new Error(`container ${entry.container} did not reach readiness; launch no agent`);
 }
 
-export function stopWorkspace(runner: CommandRunner, entry: WorkspaceEntry): void {
-  const state = containerState(runner, entry.container, entry.id);
+export function stopWorkspace(runner: CommandRunner, runtime: RuntimeEngine, entry: WorkspaceEntry): void {
+  const state = runtime.containerState(runner, entry.container, entry.id);
   if (state === 'absent' || state === 'foreign') return;
-  if (state === 'running') stopContainer(runner, entry.container);
+  if (state === 'running') runtime.stopContainer(runner, entry.container);
 }

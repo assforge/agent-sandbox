@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { agentDefinition, outdatedAgents } from '../src/agent.js';
+import { agentEngine, agentEngines, outdatedEngines } from '../src/engines/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount, validateRegistryShape } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
@@ -16,22 +16,30 @@ import { checkReadiness, configurationFingerprint, freshGeneration } from '../sr
 import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../src/help.js';
 
 describe('agents', () => {
+  const engines = agentEngines();
+
   it('pins exact npm versions and rejects unsupported agents', () => {
-    expect(agentDefinition('codex').pinnedVersion).toBe('0.154.0');
-    expect(() => agentDefinition('grok')).toThrow(/no verified linux install channel/);
-    expect(() => agentDefinition('nope')).toThrow(/unknown agent/);
+    expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', pinnedVersion: '0.154.0' });
+    expect(() => agentEngine(engines, 'grok')).toThrow(/no verified linux install channel/);
+    expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
   });
 
   it('inspects outdated versions through the runner', () => {
-    const entries = outdatedAgents({
+    const entries = outdatedEngines({
       installedVersion: (pkg) => (pkg === 'opencode-ai' ? '1.18.0' : null),
       latestVersion: () => '9.9.9',
-    });
+    }, engines.values());
     expect(entries).toHaveLength(3);
     expect(entries[0]).toMatchObject({ agent: 'opencode', pinned: '1.18.31' });
-    expect(() => agentDefinition('agy')).toThrow(/no verified linux install channel/);
-    const nullLatest = outdatedAgents({ installedVersion: () => null, latestVersion: () => null });
+    expect(() => agentEngine(engines, 'agy')).toThrow(/no verified linux install channel/);
+    const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
+  });
+
+  it('adds a fifth agent through data alone', () => {
+    const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: null }]);
+    expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
+    expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.154.0');
   });
 });
 
@@ -45,7 +53,8 @@ describe('sameImageId', () => {
   });
 });
 
-describe('config', () => {  it('rejects root and HOME mounts and redacts secrets', () => {
+describe('config', () => {
+  it('rejects root and HOME mounts and redacts secrets', () => {
     expect(rejectForbiddenMount('/')).toMatch(/root/);
     expect(rejectForbiddenMount(homedir())).toMatch(/HOME/);
     expect(rejectForbiddenMount(`${homedir()}/work`)).toBeNull();
@@ -95,6 +104,7 @@ describe('image lifecycle', () => {
       },
       '/ctx',
       'sandbox:candidate',
+      agentEngines().values(),
     );
     expect(result.tag).toBe('sandbox:candidate');
     expect(seen).toEqual(['sandbox:candidate']);
@@ -107,9 +117,9 @@ describe('image lifecycle', () => {
       inspectBinaryVersions: () => ({}),
       verifyCandidate: () => true,
     };
-    expect(() => buildCandidate(runner, '/ctx', 't')).toThrow(/expected/);
+    expect(() => buildCandidate(runner, '/ctx', 't', agentEngines().values())).toThrow(/expected/);
     expect(() =>
-      buildCandidate({ ...runner, inspectBinaryVersions: () => ({ 'opencode-ai': '0.0.0' }) }, '/ctx', 't'),
+      buildCandidate({ ...runner, inspectBinaryVersions: () => ({ 'opencode-ai': '0.0.0' }) }, '/ctx', 't', agentEngines().values()),
     ).toThrow(/0\.0\.0/);
   });
 
@@ -127,6 +137,7 @@ describe('image lifecycle', () => {
         },
         '/ctx',
         't',
+        agentEngines().values(),
       ),
     ).toThrow(/failed verification/);
   });
@@ -148,6 +159,7 @@ describe('image lifecycle', () => {
       },
       '/ctx',
       't',
+      agentEngines().values(),
     );
     expect(seenArgs[0]).not.toHaveProperty('CLAUDE_VERSION');
   });
