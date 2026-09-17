@@ -8,6 +8,14 @@ import { pathToFileURL } from 'node:url';
 import { agentDefinition, AGENT_DEFINITIONS, outdatedAgents } from '../agent.js';
 import { backupWorkspace } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
+import {
+  assertInstanceName,
+  clearCredentials,
+  listCredentialInstances,
+  loadCredentials,
+  redactEnv,
+  setCredentials,
+} from '../credentials.js';
 import { parseArgs, UsageError } from '../cli.js';
 import {
   containerState,
@@ -20,7 +28,7 @@ import {
 } from '../docker.js';
 import { buildCandidate, activateImage, rollbackImage } from '../image.js';
 import { acquireLock } from '../lock.js';
-import { CONTAINER_WORKDIR, ensureReady, stopWorkspace } from '../lifecycle.js';
+import { CONTAINER_WORKDIR, ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
 import { dryRunMigration } from '../migrate.js';
 import {
   defaultRegistryPath,
@@ -35,7 +43,7 @@ import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { dockerExec } from '../session.js';
 import { openAgentWindow, reattach, sessionAlive, assertWindowName } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
+import { agentHelp, credentialsHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
   constructor(
@@ -199,6 +207,17 @@ function requireImage(entry: WorkspaceEntry): string {
   return entry.image;
 }
 
+/**
+ * Per-instance launch environment: stored credentials plus a dedicated
+ * HOME so agent configuration and history do not cross instances.
+ * HOME wins over any stored HOME key: the instance directory is the
+ * isolation mechanism, not a suggestion.
+ */
+function launchEnvFor(deps: MainDeps, entry: WorkspaceEntry, instance: string): Record<string, string> {
+  const stored = loadCredentials(deps.homeDir, entry.id, instance) ?? {};
+  return { ...stored, HOME: instanceHome(instance) };
+}
+
 export async function main(argv: string[], deps: MainDeps): Promise<number> {
   try {
     return await dispatch(argv, deps);
@@ -261,7 +280,9 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, entry, { image: requireImage(entry) });
-        openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash']), entry.root);
+        const launchEnv = launchEnvFor(deps, entry, name);
+        ensureInstanceHome(deps.runner, entry.container, name);
+        openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnv), entry.root);
       } finally {
         handle.release();
       }
@@ -292,11 +313,13 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           entry.instances.push({ name, kind: parsed.agent, window: name });
           saveRegistry(registryPathOf(deps), registry);
         }
+        const launchEnv = launchEnvFor(deps, entry, name);
+        ensureInstanceHome(deps.runner, entry.container, name);
         launched = openAgentWindow(
           deps.runner,
           entry.session,
           name,
-          dockerExec(entry.container, CONTAINER_WORKDIR, [...def.launch, ...parsed.forwarded]),
+          dockerExec(entry.container, CONTAINER_WORKDIR, [...def.launch, ...parsed.forwarded], 'agent', true, launchEnv),
           entry.root,
         );
       } finally {
@@ -310,6 +333,8 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
     case 'agentAdmin':
       return agentCommand(deps, parsed.action, parsed.rest);
+    case 'credentials':
+      return credentialsCommand(deps, parsed.action, parsed.rest, parsed.workspace);
     case 'image':
       return imageCommand(deps, parsed.action, parsed.rest, parsed.workspace);
   }
@@ -642,8 +667,75 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
   }
 }
 
-async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {
+async function credentialsCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {
   const registry = loadRegistryOrThrow(deps);
+  if (action === 'help') {
+    deps.stdout(credentialsHelp());
+    return 0;
+  }
+  if (action === 'list') {
+    const entries = Object.values(registry.workspaces);
+    if (rest.includes('--json')) {
+      const payload: Record<string, string[]> = {};
+      for (const entry of entries) payload[entry.id] = listCredentialInstances(deps.homeDir, entry.id);
+      deps.stdout(`${JSON.stringify({ credentials: payload }, null, 2)}\n`);
+      return 0;
+    }
+    for (const entry of entries) {
+      const names = listCredentialInstances(deps.homeDir, entry.id);
+      deps.stdout(`${entry.id}: ${names.join(', ') || '(none)'}\n`);
+    }
+    return 0;
+  }
+  const instance = takeRestOption(rest, ['--instance']);
+  if (!instance) throw new UsageError(`credentials ${action} requires --instance <name>`);
+  try {
+    assertInstanceName(instance);
+  } catch (error) {
+    throw new CliError((error as Error).message, 2);
+  }
+  const resolution = resolveWorkspace({ explicitRoot: workspace, cwd: deps.cwd, registry });
+  const entry = resolution.registered ? lookupWorkspace(registry, resolution.root) : null;
+  if (!entry) throw new CliError('no workspace in scope; register one first', 1);
+  switch (action) {
+    case 'show': {
+      const stored = loadCredentials(deps.homeDir, entry.id, instance);
+      if (!stored) {
+        deps.stdout(`no credentials for instance ${instance}\n`);
+        return 0;
+      }
+      deps.stdout(`${JSON.stringify(redactEnv(stored), null, 2)}\n`);
+      return 0;
+    }
+    case 'set': {
+      const file = takeRestOption(rest, ['--file']);
+      if (!file) throw new UsageError('credentials set requires --file <path>');
+      let content: string;
+      try {
+        content = readFileSync(file, 'utf8');
+      } catch {
+        throw new CliError(`cannot read credential file: ${file}`, 2);
+      }
+      let keys: string[];
+      try {
+        keys = setCredentials(deps.homeDir, entry.id, instance, content);
+      } catch (error) {
+        throw new CliError((error as Error).message, 2);
+      }
+      deps.stdout(`stored ${keys.length} keys for instance ${instance} (values never shown)\n`);
+      return 0;
+    }
+    case 'clear': {
+      const removed = clearCredentials(deps.homeDir, entry.id, instance);
+      deps.stdout(removed ? `cleared credentials for instance ${instance}\n` : `no credentials for instance ${instance}\n`);
+      return 0;
+    }
+    default:
+      throw new UsageError(`unknown credentials action: ${action}`);
+  }
+}
+
+async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {  const registry = loadRegistryOrThrow(deps);
   switch (action) {
     case 'help':
       deps.stdout(imageHelp());

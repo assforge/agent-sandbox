@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -407,8 +407,7 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
-  it('resolves a git subdirectory to its worktree root', async () => {
-    const { home, root, world, deps, out } = setup();
+  it('resolves a git subdirectory to its worktree root', async () => {    const { home, root, world, deps, out } = setup();
     try {
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       const gitDeps = {
@@ -456,6 +455,43 @@ describe('workspace lifecycle flows', () => {
       expect(out.join('')).toContain('reused window codex');
       expect(await main(['claude', '--name', 'codex', '--workspace', root], deps)).toBe(1);
       expect(await main(['claude', '--name', 'bad:name', '--workspace', root], deps)).toBe(2);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('stores per-instance credentials and isolates launch environments', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      const relay1 = join(home, 'relay1.env');
+      const relay2 = join(home, 'relay2.env');
+      writeFileSync(relay1, 'RELAY_URL=https://one.example\nRELAY_KEY=key-one\n', 'utf8');
+      writeFileSync(relay2, 'RELAY_URL=https://two.example\nRELAY_KEY=key-two\n', 'utf8');
+      expect(await main(['credentials', 'set', '--workspace', root, '--instance', 'w1', '--file', relay1], deps)).toBe(0);
+      expect(await main(['credentials', 'set', '--workspace', root, '--instance', 'w2', '--file', relay2], deps)).toBe(0);
+      expect(await main(['credentials', 'show', '--workspace', root, '--instance', 'w1'], deps)).toBe(0);
+      expect(out.join('')).toContain('"RELAY_URL": "***"');
+      expect(out.join('')).not.toContain('key-one');
+      expect(await main(['credentials', 'list', '--workspace', root], deps)).toBe(0);
+      expect(await main(['shell', '--workspace', root, '--name', 'w1', '--no-attach'], deps)).toBe(0);
+      expect(await main(['shell', '--workspace', root, '--name', 'w2', '--no-attach'], deps)).toBe(0);
+      const launches = world.calls.filter(
+        (call) => call[0] === 'tmux' && call.includes('docker'),
+      );
+      expect(launches.length).toBeGreaterThanOrEqual(2);
+      const w1launch = launches.find((call) => call.includes('RELAY_URL=https://one.example')) as string[];
+      const w2launch = launches.find((call) => call.includes('RELAY_URL=https://two.example')) as string[];
+      expect(w1launch).toBeDefined();
+      expect(w2launch).toBeDefined();
+      expect(w1launch.join(' ')).toContain('HOME=/home/agent/instances/w1');
+      expect(w1launch.join(' ')).not.toContain('key-two');
+      expect(w2launch.join(' ')).not.toContain('key-one');
+      expect(await main(['credentials', 'clear', '--workspace', root, '--instance', 'w1'], deps)).toBe(0);
+      expect(await main(['credentials', 'show', '--workspace', root, '--instance', 'w1'], deps)).toBe(0);
+      expect(await main(['credentials', 'help'], deps)).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
