@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -71,8 +72,7 @@ describe('main', () => {
     }
   });
 
-  it('routes resource stubs and agent launch to preview errors', () => {
-    expect(main(['workspace', 'list'], deps())).toBe(1);
+  it('routes resource stubs and agent launch to preview errors', () => {    expect(main(['workspace', 'list'], deps())).toBe(1);
     expect(main(['workspace', 'help'], deps())).toBe(0);
     expect(main(['agent', 'list'], deps())).toBe(1);
     expect(main(['agent', 'help'], deps())).toBe(0);
@@ -81,5 +81,19 @@ describe('main', () => {
     expect(main(['claude'], deps())).toBe(1);
     expect(main([], deps())).toBe(1);
     expect(main(['shell'], deps())).toBe(1);
+  });
+});
+
+describe.skipIf(!existsSync(new URL('../dist/bin/sandbox.js', import.meta.url)))('installed entry point', () => {
+  it('fires through a symlinked bin path like a global install', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sandbox-bin-'));
+    try {
+      const link = join(dir, 'sandbox');
+      symlinkSync(new URL('../dist/bin/sandbox.js', import.meta.url), link);
+      const output = execFileSync(process.execPath, [link, '--version'], { encoding: 'utf8' });
+      expect(output).toMatch(/sandbox \d+\.\d+\.\d+/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,5 +1,3 @@
-export const SANDBOX_VERSION = '0.1.0';
-
 const SHARED_HELP = `Prerequisites: Docker and tmux are host dependencies. Doctor reports
 remediation commands but never installs anything automatically.
 
