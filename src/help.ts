@@ -11,7 +11,7 @@ Resolve the current workspace and start or reconnect its environment.
 The first window is a shell. This command never starts an agent fleet.
 
 Commands:
-  sandbox [agent] [--name <name>] [-- <agent arguments...>]
+  sandbox [agent] [--name <name>] [--no-attach] [-- <agent arguments...>]
     Open a named agent window in this workspace. The default instance
     name equals the agent name. Supported agents: claude, opencode,
     codex, copilot. Arguments after -- are forwarded without reparsing.

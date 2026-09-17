@@ -14,26 +14,29 @@ describe('splitForwarded', () => {
 
 describe('parseArgs', () => {
   it('parses bare, help and version without side effects', () => {
-    expect(parseArgs([])).toEqual({ kind: 'bare', workspace: undefined });
-    expect(parseArgs(['--workspace', '/w'])).toEqual({ kind: 'bare', workspace: '/w' });
+    expect(parseArgs([])).toEqual({ kind: 'bare', workspace: undefined, noAttach: false });
+    expect(parseArgs(['--workspace', '/w'])).toEqual({ kind: 'bare', workspace: '/w', noAttach: false });
     expect(parseArgs(['--help'])).toEqual({ kind: 'help' });
     expect(parseArgs(['--version'])).toEqual({ kind: 'version' });
   });
 
   it('parses agent shortcuts with names and forwarding', () => {
     expect(SUPPORTED_AGENTS).toContain('claude');
-    expect(parseArgs(['claude'])).toEqual({ kind: 'agent', agent: 'claude', name: undefined, workspace: undefined, forwarded: [] });
+    expect(parseArgs(['claude'])).toEqual({ kind: 'agent', agent: 'claude', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
     expect(parseArgs(['codex', '--name', 'sdk', '--', '-c', 'x'])).toEqual({
       kind: 'agent',
       agent: 'codex',
       name: 'sdk',
       workspace: undefined,
       forwarded: ['-c', 'x'],
+      noAttach: false,
     });
+    expect(parseArgs(['claude', '--no-attach'])).toMatchObject({ kind: 'agent', noAttach: true });
+    expect(parseArgs(['--no-attach'])).toMatchObject({ kind: 'bare', noAttach: true });
   });
 
   it('parses shell, doctor and resource groups', () => {
-    expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined });
+    expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined, noAttach: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });
     expect(parseArgs(['doctor'])).toEqual({ kind: 'doctor', json: false, workspace: undefined });
     expect(parseArgs(['workspace', 'list'])).toEqual({ kind: 'workspace', action: 'list', rest: [], workspace: undefined });
