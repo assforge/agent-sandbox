@@ -339,7 +339,11 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
     case 'register': {
       const registry = loadRegistryOrThrow(deps);
-      const canonical = defaultCanonicalize(parsed.root ?? deps.cwd);
+      const raw = parsed.root ?? deps.cwd;
+      if (!existsSync(raw)) {
+        throw new CliError(`workspace root does not exist: ${raw}`, 2);
+      }
+      const canonical = defaultCanonicalize(raw);
       const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
       saveRegistry(registryPathOf(deps), registry);
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
@@ -424,6 +428,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'register': {
       const root = takeRestOption(rest, ['--root']);
       if (!root) throw new UsageError('workspace register requires --root <path>');
+      if (!existsSync(root)) {
+        throw new CliError(`workspace root does not exist: ${root}`, 2);
+      }
       const canonical = defaultCanonicalize(root);
       const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
       saveRegistry(registryPathOf(deps), registry);
