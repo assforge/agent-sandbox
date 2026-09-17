@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -214,7 +214,23 @@ describe('locks and backups', () => {
     }
   });
 
-  it('backs up and restores through the runner', () => {
+  it('reclaims a lock left by a dead holder', () => {    const dir = mkdtempSync(join(tmpdir(), 'sandbox-lock-'));
+    try {
+      writeFileSync(join(dir, 'w-abc.lock'), '999999999\n', 'utf8');
+      const handle = acquireLock(dir, 'w-abc', 2000);
+      handle.release();
+      expect(readdirSync(dir)).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses traversing or relative lock directories', () => {
+    expect(() => acquireLock('/tmp/safe/../../evil', 'w', 100)).toThrow(/refused lock directory/);
+    expect(() => acquireLock('relative/dir', 'w', 100)).toThrow(/refused lock directory/);
+  });
+
+  it('backs up and restores through the runner, recreating lost entries', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sandbox-backup-'));
     try {
       const calls: string[] = [];
@@ -228,13 +244,19 @@ describe('locks and backups', () => {
       };
       const registry = emptyRegistry();
       const entry = registerWorkspace(registry, '/w', []);
+      entry.image = 'sha256:one';
       const out = join(dir, 'backup');
       const receipt = backupWorkspace(runner, entry, out);
       expect(receipt).toMatchObject({ workspace: entry.id, copiedState: true });
       expect(existsSync(join(out, 'workspace.json'))).toBe(true);
-      const restored = restoreWorkspace(runner, entry, out);
-      expect(restored.copiedState).toBe(true);
+      delete registry.workspaces[entry.id];
+      const restored = restoreWorkspace(runner, registry, out);
+      expect(restored.id).toBe(entry.id);
+      expect(restored.image).toBe('sha256:one');
+      expect(restored.root).toBe('/w');
+      expect(registry.workspaces[entry.id]).toBe(restored);
       expect(calls).toHaveLength(2);
+      expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'))).toThrow(/missing or invalid/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
