@@ -42,6 +42,22 @@ function requiredString(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function requiredName(record: Record<string, unknown>, key: string): string {
+  const value = requiredString(record, key);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value)) {
+    throw new Error(`backup workspace.json has an unsafe ${key}: ${value}`);
+  }
+  return value;
+}
+
+function requiredRoot(record: Record<string, unknown>, key: string): string {
+  const value = requiredString(record, key);
+  if (!value.startsWith('/')) {
+    throw new Error(`backup workspace.json has a non-absolute ${key}: ${value}`);
+  }
+  return value;
+}
+
 /**
  * Restore a backup: reinstates the registry entry (recreating it when the
  * workspace was lost) and copies the home state back into the container.
@@ -59,18 +75,20 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     throw new Error('backup workspace.json has an unexpected shape');
   }
   const record = parsed as Record<string, unknown>;
-  const id = requiredString(record, 'id');
+  const id = requiredName(record, 'id');
+  const rawMounts = record['mounts'];
+  const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
   const entry: WorkspaceEntry = {
     id,
-    root: requiredString(record, 'root'),
-    container: requiredString(record, 'container'),
+    root: requiredRoot(record, 'root'),
+    container: requiredName(record, 'container'),
     image: typeof record['image'] === 'string' ? (record['image'] as string) : null,
     previousImage: typeof record['previousImage'] === 'string' ? (record['previousImage'] as string) : null,
-    session: requiredString(record, 'session'),
+    session: requiredName(record, 'session'),
     instances: [],
-    homeVolume: requiredString(record, 'homeVolume'),
+    homeVolume: requiredName(record, 'homeVolume'),
     network: record['network'] === 'restricted' ? 'restricted' : 'open',
-    mounts: Array.isArray(record['mounts']) ? (record['mounts'] as string[]) : [],
+    mounts,
   };
   registry.workspaces[id] = entry;
   runner.copyToContainer(entry.container, join(outputDir, 'home'), '/home/agent');

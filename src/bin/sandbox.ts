@@ -33,7 +33,7 @@ import {
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { dockerExec } from '../session.js';
-import { openAgentWindow, reattach, sessionAlive } from '../terminal.js';
+import { openAgentWindow, reattach, sessionAlive, assertWindowName } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
 
@@ -162,12 +162,19 @@ function loadRegistryOrThrow(deps: MainDeps): Registry {
   }
 }
 
+function detectGitRoot(deps: MainDeps): string | null {
+  const probed = deps.runner.run('git', ['-C', deps.cwd, 'rev-parse', '--show-toplevel']);
+  if (probed.status !== 0) return null;
+  const root = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean)[0];
+  return root ?? null;
+}
+
 async function resolveAndEnsure(
   deps: MainDeps,
   registry: Registry,
   explicitRoot: string | undefined,
-  gitRoot: string | null,
 ): Promise<WorkspaceEntry> {
+  const gitRoot = explicitRoot === undefined ? detectGitRoot(deps) : null;
   const resolution = resolveWorkspace({ explicitRoot, cwd: deps.cwd, registry, gitRoot });
   const existing = lookupWorkspace(registry, resolution.root);
   if (existing) return existing;
@@ -243,11 +250,14 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     }
     case 'bare':
     case 'shell': {
-      const registry = loadRegistryOrThrow(deps);
-      const entry = await resolveAndEnsure(deps, registry, parsed.workspace, null);
-      // The lock covers preparation only: reattach blocks for the life of
-      // the session and must never hold the workspace lock.
       const name = parsed.kind === 'shell' ? (parsed.name ?? 'shell') : 'shell';
+      try {
+        assertWindowName(name);
+      } catch (error) {
+        throw new CliError((error as Error).message, 2);
+      }
+      const registry = loadRegistryOrThrow(deps);
+      const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, entry, { image: requireImage(entry) });
@@ -259,10 +269,15 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return 0;
     }
     case 'agent': {
-      const registry = loadRegistryOrThrow(deps);
-      const entry = await resolveAndEnsure(deps, registry, parsed.workspace, null);
       const def = agentDefinition(parsed.agent);
       const name = parsed.name ?? parsed.agent;
+      try {
+        assertWindowName(name);
+      } catch (error) {
+        throw new CliError((error as Error).message, 2);
+      }
+      const registry = loadRegistryOrThrow(deps);
+      const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
       const same = entry.instances.find((item) => item.name === name);
       if (same && same.kind !== parsed.agent) {
         throw new CliError(`instance name is occupied by another agent: ${name} runs ${same.kind}`, 1);
@@ -330,7 +345,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     }
     case 'status': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const state = containerState(deps.runner, entry.container, entry.id);
       const alive = sessionAlive(deps.runner, entry.session);
       if (rest.includes('--json')) {
@@ -350,7 +365,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     }
     case 'start': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, entry, { image: requireImage(entry) });
@@ -361,7 +376,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       }
     }
     case 'stop': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       if (entry.instances.length > 0) {
         const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Stop?`);
         if (!approved) throw new CliError('stop cancelled; nothing was changed', 1);
@@ -376,7 +391,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       }
     }
     case 'attach': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       if (!sessionAlive(deps.runner, entry.session)) {
         throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
@@ -384,7 +399,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     }
     case 'exec': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const separator = rest.indexOf('--');
       const command = separator >= 0 ? rest.slice(separator + 1) : rest;
       if (command.length === 0) throw new UsageError('workspace exec requires -- <command>');
@@ -401,7 +416,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       }
     }
     case 'configure': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const addMount = takeRestOption(rest, ['--add-mount']);
       const dropMount = takeRestOption(rest, ['--drop-mount']);
       const network = takeRestOption(rest, ['--network']);
@@ -439,7 +454,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'backup': {
       const output = takeRestOption(rest, ['--output']);
       if (!output) throw new UsageError('workspace backup requires --output <path>');
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         const receipt = backupWorkspace(
@@ -474,7 +489,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         ...volumes.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'volume' as const, name })),
         ...(sessions.status === 0 ? sessions.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'session' as const, name })) : []),
       ];
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const plan = dryRunMigration(existing, entry.id);
       deps.stdout(`dry-run: ${plan.mappings.length} legacy resources mapped, originals retained\n`);
       for (const mapping of plan.mappings) {
@@ -699,7 +714,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       const digest = rest[0];
       if (!digest) throw new UsageError('image activate requires <digest>');
       if (!imageExists(deps.runner, digest)) throw new CliError(`image not found locally: ${digest}`, 1);
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       if (entry.instances.length > 0) {
         const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Activate?`);
         if (!approved) throw new CliError('activate cancelled; nothing was changed', 1);
@@ -715,7 +730,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       }
     }
     case 'rollback': {
-      const entry = await resolveAndEnsure(deps, registry, workspace, null);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         let activation;

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import { normalizeLexical, redactedConfig, rejectForbiddenMount, validateRegistr
 import { emptyRegistry, registerWorkspace } from '../src/registry.js';
 import { activateImage, buildCandidate, recordActivation, rollbackImage } from '../src/image.js';
 import { acquireLock } from '../src/lock.js';
+import { assertWindowName } from '../src/terminal.js';
 import { approveMigration, dryRunMigration } from '../src/migrate.js';
 import { checkReadiness, configurationFingerprint, freshGeneration } from '../src/readiness.js';
 import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../src/help.js';
@@ -228,6 +229,16 @@ describe('locks and backups', () => {
   it('refuses traversing or relative lock directories', () => {
     expect(() => acquireLock('/tmp/safe/../../evil', 'w', 100)).toThrow(/refused lock directory/);
     expect(() => acquireLock('relative/dir', 'w', 100)).toThrow(/refused lock directory/);
+    expect(() => acquireLock('/tmp/safe', '../evil', 100)).toThrow(/refused lock identity/);
+    expect(() => acquireLock('/tmp/safe', '', 100)).toThrow(/refused lock identity/);
+  });
+
+  it('validates window names against tmux target syntax', () => {
+    expect(() => assertWindowName('rollout')).not.toThrow();
+    expect(() => assertWindowName('sdk.stg-2')).not.toThrow();
+    expect(() => assertWindowName('a:b')).toThrow(/invalid instance name/);
+    expect(() => assertWindowName('')).toThrow(/invalid instance name/);
+    expect(() => assertWindowName('-lead')).toThrow(/invalid instance name/);
   });
 
   it('backs up and restores through the runner, recreating lost entries', () => {
@@ -257,6 +268,22 @@ describe('locks and backups', () => {
       expect(registry.workspaces[entry.id]).toBe(restored);
       expect(calls).toHaveLength(2);
       expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'))).toThrow(/missing or invalid/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects tampered backups with unsafe names', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sandbox-backup-'));
+    try {
+      const out = join(dir, 'evil');
+      mkdirSync(out, { recursive: true });
+      writeFileSync(
+        join(out, 'workspace.json'),
+        JSON.stringify({ id: '../evil', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: ['/w'] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), out)).toThrow(/unsafe id/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
