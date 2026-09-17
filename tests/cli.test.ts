@@ -35,6 +35,20 @@ describe('parseArgs', () => {
     expect(parseArgs(['--no-attach'])).toMatchObject({ kind: 'bare', noAttach: true });
   });
 
+  it('parses the short register shortcut', () => {
+    expect(parseArgs(['register'])).toEqual({ kind: 'register', root: undefined, workspace: undefined });
+    expect(parseArgs(['register', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: undefined });
+    expect(parseArgs(['--workspace', '/w', 'register', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: '/w' });
+    for (const argv of [['register', 'a', 'b'], ['register', '--json']]) {
+      try {
+        parseArgs(argv);
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(UsageError);
+      }
+    }
+  });
+
   it('parses shell, doctor and resource groups', () => {
     expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined, noAttach: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });

@@ -30,6 +30,9 @@ Commands:
     sandbox credentials help.
   sandbox shell [--name <name>] [--no-attach]
     Open a shell window in the workspace container.
+  sandbox register [path]
+    Register a workspace root. Defaults to the current directory.
+    Short for sandbox workspace register --root <path>.
   sandbox doctor [--json]
     Read-only diagnostics with remediation commands.
   sandbox workspace list [--json]

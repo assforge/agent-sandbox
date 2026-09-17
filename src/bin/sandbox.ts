@@ -337,6 +337,14 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     }
     case 'workspace':
       return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
+    case 'register': {
+      const registry = loadRegistryOrThrow(deps);
+      const canonical = defaultCanonicalize(parsed.root ?? deps.cwd);
+      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
+      saveRegistry(registryPathOf(deps), registry);
+      deps.stdout(`registered ${entry.id} for ${canonical}\n`);
+      return 0;
+    }
     case 'agentAdmin':
       return agentCommand(deps, parsed.action, parsed.rest);
     case 'credentials':
