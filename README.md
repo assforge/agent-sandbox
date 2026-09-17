@@ -30,3 +30,16 @@ reports platform-appropriate remediation commands but never installs them.
 Containers never receive the host HOME, SSH credentials, or the Docker
 socket. Same-container agents share a user and can read one another's
 files; containers do not protect prompt or file content sent to providers.
+
+## Cross-OS node_modules
+
+The workspace root is mounted from the host. When the host OS differs
+from the container OS (macOS host, Linux container), host-installed
+`node_modules` with native bindings (for example rollup) do not load
+inside the container. Run a container-side install into a directory
+outside the shared mount before executing project tests there:
+
+```sh
+sandbox workspace exec -- npm ci --prefix /tmp/party
+sandbox workspace exec -- npm --prefix /tmp/party test
+```
