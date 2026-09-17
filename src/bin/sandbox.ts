@@ -11,6 +11,7 @@ import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../confi
 import { parseArgs, UsageError } from '../cli.js';
 import {
   containerState,
+  ensureVolume,
   imageExists,
   listManagedContainers,
   type CommandRunner,
@@ -235,46 +236,51 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     case 'shell': {
       const registry = loadRegistryOrThrow(deps);
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace, null);
+      // The lock covers preparation only: reattach blocks for the life of
+      // the session and must never hold the workspace lock.
+      const name = parsed.kind === 'shell' ? (parsed.name ?? 'shell') : 'shell';
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, entry, { image: requireImage(entry) });
-        const name = parsed.kind === 'shell' ? (parsed.name ?? 'shell') : 'shell';
         openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash']), entry.root);
-        if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
-        return 0;
       } finally {
         handle.release();
       }
+      if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+      return 0;
     }
     case 'agent': {
       const registry = loadRegistryOrThrow(deps);
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace, null);
       const def = agentDefinition(parsed.agent);
+      const name = parsed.name ?? parsed.agent;
+      const same = entry.instances.find((item) => item.name === name);
+      if (same && same.kind !== parsed.agent) {
+        throw new CliError(`instance name is occupied by another agent: ${name} runs ${same.kind}`, 1);
+      }
+      // The lock covers preparation only: reattach blocks for the life of
+      // the session and must never hold the workspace lock.
       const handle = acquireLock(deps.lockDir, entry.id);
+      let launched: string;
       try {
         ensureReady(deps.runner, entry, { image: requireImage(entry) });
-        const name = parsed.name ?? parsed.agent;
-        const same = entry.instances.find((item) => item.name === name);
-        if (same && same.kind !== parsed.agent) {
-          throw new CliError(`instance name is occupied by another agent: ${name} runs ${same.kind}`, 1);
-        }
         if (!same) {
           entry.instances.push({ name, kind: parsed.agent, window: name });
           saveRegistry(registryPathOf(deps), registry);
         }
-        const launched = openAgentWindow(
+        launched = openAgentWindow(
           deps.runner,
           entry.session,
           name,
           dockerExec(entry.container, CONTAINER_WORKDIR, [...def.launch, ...parsed.forwarded]),
           entry.root,
         );
-        deps.stdout(`${launched} window ${name} (${parsed.agent}) in session ${entry.session}\n`);
-        if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
-        return 0;
       } finally {
         handle.release();
       }
+      deps.stdout(`${launched} window ${name} (${parsed.agent}) in session ${entry.session}\n`);
+      if (!parsed.noAttach) reattach(deps.runner, entry.session, deps.insideTmux);
+      return 0;
     }
     case 'workspace':
       return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
@@ -289,7 +295,7 @@ function takeRestOption(rest: string[], names: string[]): string | undefined {
   const index = rest.findIndex((arg) => names.includes(arg));
   if (index < 0) return undefined;
   const value = rest[index + 1];
-  if (!value) throw new UsageError(`option ${rest[index]} requires a value`);
+  if (!value || value.startsWith('-')) throw new UsageError(`option ${rest[index]} requires a value`);
   return value;
 }
 
@@ -403,7 +409,13 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const approved = await deps.confirm('apply these mount changes?');
       if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
       if (addMount && !entry.mounts.includes(defaultCanonicalize(addMount))) entry.mounts.push(defaultCanonicalize(addMount));
-      if (dropMount) entry.mounts = entry.mounts.filter((mount) => normalizeLexical(mount) !== normalizeLexical(dropMount));
+      if (dropMount) {
+        const canonicalDrop = defaultCanonicalize(dropMount);
+        if (normalizeLexical(canonicalDrop) === normalizeLexical(entry.root)) {
+          throw new CliError(`cannot drop the workspace root mount: ${entry.root}`, 2);
+        }
+        entry.mounts = entry.mounts.filter((mount) => normalizeLexical(mount) !== normalizeLexical(canonicalDrop));
+      }
       saveRegistry(registryPathOf(deps), registry);
       return 0;
     }
@@ -454,8 +466,28 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (!apply) return 0;
       const approved = await deps.confirm('copy approved agent state and interrupt writers?');
       if (!approved) throw new CliError('migrate cancelled; nothing was changed', 1);
-      deps.stdout('apply approved: snapshot writers, then copy state volumes (not implemented in this preview)\n');
-      return 0;
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        let copied = 0;
+        for (const mapping of plan.mappings) {
+          if (!mapping.copiesState || mapping.legacy.kind !== 'volume') continue;
+          ensureVolume(deps.runner, mapping.destination, entry.id);
+          const result = deps.runner.run('docker', [
+            'run', '--rm',
+            '-v', `${mapping.legacy.name}:/from:ro`,
+            '-v', `${mapping.destination}:/to`,
+            'alpine', 'sh', '-c', 'cp -a /from/. /to/',
+          ]);
+          if (result.status !== 0) {
+            throw new CliError(`migrate copy failed for ${mapping.legacy.name}: ${result.stderr.trim()}`, 1);
+          }
+          copied += 1;
+        }
+        deps.stdout(`migrate apply complete: ${copied} state volumes copied; originals retained for recovery\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
     }
     default:
       throw new UsageError(`unknown workspace action: ${action}`);
@@ -510,8 +542,67 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       const target = rest[0];
       if (!target) throw new UsageError('agent upgrade requires <agent|all>');
       const names = target === 'all' ? AGENT_DEFINITIONS.map((def) => def.name) : [target];
-      for (const name of names) agentDefinition(name);
-      deps.stdout(`upgrade builds a candidate only; run sandbox image build, then activate explicitly\n`);
+      const overrides: Record<string, string> = {};
+      const defs = names.map((name) => {
+        try {
+          return agentDefinition(name);
+        } catch (error) {
+          throw new CliError((error as Error).message, 1);
+        }
+      });
+      for (const def of defs) {
+        if (!def.npmPackage) {
+          deps.stdout(`${def.name} is native and has no npm upgrade channel\n`);
+          continue;
+        }
+        const probed = deps.runner.run('npm', ['view', def.npmPackage, 'version']);
+        const latest = probed.status === 0 ? probed.stdout.trim() : '';
+        if (!latest) throw new CliError(`cannot resolve latest version for ${def.npmPackage}`, 1);
+        overrides[def.npmPackage] = latest;
+        deps.stdout(`${def.name}: pinned ${def.pinnedVersion}, latest ${latest}\n`);
+      }
+      if (Object.keys(overrides).length === 0) return 0;
+      const contextDir = new URL('../../templates', import.meta.url).pathname;
+      const tag = `sandbox-workspace:upgrade-${Date.now()}`;
+      const built = buildCandidate(
+        {
+          buildImage: (plan) => {
+            const args = ['build', '-f', `${plan.contextDir}/Dockerfile`];
+            for (const [key, value] of Object.entries(plan.buildArgs)) args.push('--build-arg', `${key}=${value}`);
+            args.push('-t', plan.tag, plan.contextDir);
+            const result = deps.runner.run('docker', args);
+            if (result.status !== 0) throw new CliError(`upgrade build failed: ${result.stderr.trim()}`, 1);
+            return plan.tag;
+          },
+          inspectBinaryVersions: (candidate) => {
+            const probed = deps.runner.run('docker', [
+              'run', '--rm',
+              '-e', 'SANDBOX_GENERATION=inspect',
+              '-e', 'SANDBOX_CONFIG_FINGERPRINT=inspect',
+              candidate, 'sh', '-c', 'opencode --version; codex --version; copilot --version',
+            ]);
+            const versions: Record<string, string> = {};
+            const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+            if (lines[0]) versions['opencode-ai'] = lines[0];
+            if (lines[1]) versions['@openai/codex'] = lines[1].replace(/^codex-cli /, '');
+            if (lines[2]) versions['@github/copilot'] = lines[2].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
+            return versions;
+          },
+          verifyCandidate: (candidate) => {
+            const probed = deps.runner.run('docker', [
+              'run', '--rm',
+              '-e', 'SANDBOX_GENERATION=upgrade-verify',
+              '-e', 'SANDBOX_CONFIG_FINGERPRINT=verify',
+              candidate, 'sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh',
+            ]);
+            return probed.status === 0;
+          },
+        },
+        contextDir,
+        tag,
+        overrides,
+      );
+      deps.stdout(`upgrade candidate ${built.tag} verified; running sessions are untouched.\nActivate explicitly with: sandbox image activate ${built.tag}\n`);
       return 0;
     }
     default:
@@ -551,7 +642,12 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
             return plan.tag;
           },
           inspectBinaryVersions: (candidate) => {
-            const probed = deps.runner.run('docker', ['run', '--rm', candidate, 'sh', '-c', 'opencode --version; codex --version; copilot --version']);
+            const probed = deps.runner.run('docker', [
+              'run', '--rm',
+              '-e', 'SANDBOX_GENERATION=inspect',
+              '-e', 'SANDBOX_CONFIG_FINGERPRINT=inspect',
+              candidate, 'sh', '-c', 'opencode --version; codex --version; copilot --version',
+            ]);
             const versions: Record<string, string> = {};
             const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
             if (lines[0]) versions['opencode-ai'] = lines[0];
@@ -560,8 +656,20 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
             return versions;
           },
           verifyCandidate: (candidate) => {
-            const probed = deps.runner.run('docker', ['run', '--rm', candidate, 'sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
-            return probed.status === 0;
+            const generation = `verify-${Date.now()}`;
+            const probed = deps.runner.run('docker', [
+              'run', '--rm',
+              '-e', `SANDBOX_GENERATION=${generation}`,
+              '-e', 'SANDBOX_CONFIG_FINGERPRINT=verify',
+              candidate, 'sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh && cat /tmp/sandbox-ready/ready.json',
+            ]);
+            if (probed.status !== 0) return false;
+            try {
+              const ready = JSON.parse(probed.stdout) as { generation?: unknown };
+              return ready.generation === generation;
+            } catch {
+              return false;
+            }
           },
         },
         contextDir,

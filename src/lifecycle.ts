@@ -1,8 +1,11 @@
 import { checkReadiness, checkRestarted, configurationFingerprint, freshGeneration } from './readiness.js';
 import {
+  containerImageId,
   containerState,
   createContainer,
   readReadyJson,
+  referenceImageId,
+  removeContainer,
   startContainer,
   stopContainer,
   type CommandRunner,
@@ -30,7 +33,7 @@ export function ensureReady(
   entry: WorkspaceEntry,
   options: EnsureOptions,
 ): { generation: string; fingerprint: string } {
-  const state = containerState(runner, entry.container, entry.id);
+  let state = containerState(runner, entry.container, entry.id);
   if (state === 'foreign') {
     throw new Error(`container name is owned by another setup: ${entry.container}; refusing to mutate`);
   }
@@ -38,6 +41,17 @@ export function ensureReady(
   const fingerprint = configurationFingerprint([entry.root, entry.image ?? '', options.image, ...entry.mounts]);
   const attempts = options.probes ?? 30;
   const interval = options.probeIntervalMs ?? 1000;
+  if (state !== 'absent') {
+    // A selected image that no longer matches the running container means
+    // an activation happened while it ran: cut over by recreating it.
+    // Stopped containers keep their image; only a changed selection recreates.
+    const runningId = containerImageId(runner, entry.container);
+    const desiredId = referenceImageId(runner, options.image);
+    if (runningId && desiredId && runningId !== desiredId) {
+      removeContainer(runner, entry.container);
+      state = 'absent';
+    }
+  }
   if (state === 'absent') {
     createContainer(runner, entry, {
       image: options.image,

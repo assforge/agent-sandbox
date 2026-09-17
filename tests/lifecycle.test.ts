@@ -11,10 +11,19 @@ import { emptyRegistry, loadRegistry, registerWorkspace } from '../src/registry.
 /** Scripted docker+tmux world. Captures env from docker run; serves ready.json accordingly. */
 class FakeWorld {
   calls: string[][] = [];
-  containers = new Map<string, { running: boolean; owner: string; generation: string; fingerprint: string; startedAt: number }>();
+  containers = new Map<string, { running: boolean; owner: string; generation: string; fingerprint: string; startedAt: number; imageId: string }>();
   volumes = new Set<string>();
   sessions = new Map<string, Set<string>>();
   images = new Set<string>(['sandbox-workspace:current']);
+
+  imageIdOf = (image: string): string => `id-of-${image}`;
+
+  seedLegacy(): void {
+    this.containers.set('pedantic_snyder', { running: true, owner: 'legacy', generation: '', fingerprint: '', startedAt: 0, imageId: 'legacy-img' });
+    for (const volume of ['claude-relay-config', 'claude-relay-codex', 'claude-relay-xdg']) {
+      this.volumes.add(volume);
+    }
+  }
 
   run = (command: string, args: string[]): RunResult => {
     this.calls.push([command, ...args]);
@@ -23,6 +32,17 @@ class FakeWorld {
     if (command === 'npm') return this.npm(args);
     return { status: 0, stdout: '', stderr: '' };
   };
+
+  private envOf(args: string[]): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] === '-e' && args[i + 1]) {
+        const [key, ...value] = (args[i + 1] as string).split('=');
+        env[key as string] = value.join('=');
+      }
+    }
+    return env;
+  }
 
   private docker(args: string[]): RunResult {
     const [verb, ...rest] = args;
@@ -37,7 +57,12 @@ class FakeWorld {
       return { status: 0, stdout: names.join('\n'), stderr: '' };
     }
     if (verb === 'inspect' && rest[0] === '--format') {
+      const format = rest[1] as string;
       const name = rest[rest.length - 1] as string;
+      if (format === '{{.Image}}') {
+        const container = this.containers.get(name);
+        return container ? { status: 0, stdout: container.imageId, stderr: '' } : { status: 1, stdout: '', stderr: 'no such' };
+      }
       const container = this.containers.get(name);
       if (!container) return { status: 1, stdout: '', stderr: 'No such container' };
       return { status: 0, stdout: `${container.running}|true|${container.owner}`, stderr: '' };
@@ -59,28 +84,43 @@ class FakeWorld {
     if (verb === 'run' && rest[0] === '-d') {
       const nameIndex = rest.indexOf('--name');
       const name = rest[nameIndex + 1] as string;
-      const env: Record<string, string> = {};
-      for (let i = 0; i < rest.length; i += 1) {
-        if (rest[i] === '-e' && rest[i + 1]) {
-          const [key, ...value] = (rest[i + 1] as string).split('=');
-          env[key as string] = value.join('=');
-        }
-      }
+      const env = this.envOf(rest);
       let owner = '';
       for (let i = 0; i < rest.length; i += 1) {
-        if (rest[i] === 'sandbox.workspace=false') owner = '';
         if (typeof rest[i] === 'string' && (rest[i] as string).startsWith('sandbox.workspace=')) {
           owner = (rest[i] as string).split('=')[1] as string;
         }
       }
+      const image = rest[rest.length - 3] as string;
       this.containers.set(name, {
         running: true,
         owner,
         generation: env['SANDBOX_GENERATION'] ?? '',
         fingerprint: env['SANDBOX_CONFIG_FINGERPRINT'] ?? '',
         startedAt: Math.floor(Date.now() / 1000),
+        imageId: this.imageIdOf(image),
       });
       return { status: 0, stdout: 'cid', stderr: '' };
+    }
+    if (verb === 'run' && rest[0] === '--rm') {
+      const env = this.envOf(rest);
+      const script = rest[rest.length - 1] as string;
+      if (script.includes('opencode --version')) {
+        return { status: 0, stdout: '1.18.31\ncodex-cli 0.154.0\nGitHub Copilot CLI 1.0.85.\n', stderr: '' };
+      }
+      if (script.includes('cat /tmp/sandbox-ready/ready.json')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ generation: env['SANDBOX_GENERATION'] ?? '', fingerprint: env['SANDBOX_CONFIG_FINGERPRINT'] ?? '' }),
+          stderr: '',
+        };
+      }
+      if (script.includes('cp -a /from/. /to/')) return { status: 0, stdout: '', stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (verb === 'rm') {
+      this.containers.delete(rest[rest.length - 1] as string);
+      return { status: 0, stdout: '', stderr: '' };
     }
     if (verb === 'start') {
       const container = this.containers.get(rest[0] as string);
@@ -114,7 +154,8 @@ class FakeWorld {
         : { status: 1, stdout: '', stderr: 'no such image' };
     }
     if (verb === 'images' && rest[0] === '-q') {
-      return { status: 0, stdout: this.images.has(rest[1] as string) ? 'sha256:x' : '', stderr: '' };
+      const image = rest[1] as string;
+      return { status: 0, stdout: this.images.has(image) ? this.imageIdOf(image) : '', stderr: '' };
     }
     if (verb === 'ps') {
       return { status: 0, stdout: [...this.containers.keys()].join('\n'), stderr: '' };
@@ -157,7 +198,14 @@ class FakeWorld {
 
   private npm(args: string[]): RunResult {
     if (args[0] === 'ls') return { status: 0, stdout: JSON.stringify({ dependencies: {} }), stderr: '' };
-    if (args[0] === 'view') return { status: 0, stdout: '9.9.9\n', stderr: '' };
+    if (args[0] === 'view') {
+      const pinned: Record<string, string> = {
+        'opencode-ai': '1.18.31',
+        '@openai/codex': '0.154.0',
+        '@github/copilot': '1.0.85',
+      };
+      return { status: 0, stdout: `${pinned[args[1] as string] ?? '9.9.9'}\n`, stderr: '' };
+    }
     return { status: 0, stdout: '', stderr: '' };
   }
 }
@@ -195,9 +243,9 @@ describe('container state detection', () => {
   it('reports absent, running, and foreign distinctly', () => {
     const world = new FakeWorld();
     expect(containerState(world, 'missing', 'w')).toBe('absent');
-    world.containers.set('mine', { running: true, owner: 'w', generation: 'g', fingerprint: 'f', startedAt: 0 });
+    world.containers.set('mine', { running: true, owner: 'w', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img' });
     expect(containerState(world, 'mine', 'w')).toBe('running');
-    world.containers.set('theirs', { running: true, owner: 'other', generation: 'g', fingerprint: 'f', startedAt: 0 });
+    world.containers.set('theirs', { running: true, owner: 'other', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img' });
     expect(containerState(world, 'theirs', 'w')).toBe('foreign');
   });
 });
@@ -235,7 +283,7 @@ describe('workspace lifecycle flows', () => {
       expect(err.join('')).toMatch(/no image selected/);
       const registry = emptyRegistry();
       const entry = registerWorkspace(registry, root, [root]);
-      world.containers.set(entry.container, { running: true, owner: 'someone-else', generation: 'g', fingerprint: 'f', startedAt: 0 });
+      world.containers.set(entry.container, { running: true, owner: 'someone-else', generation: 'g', fingerprint: 'f', startedAt: 0, imageId: 'img' });
       expect(containerState(world, entry.container, entry.id)).toBe('foreign');
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -260,6 +308,57 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['agent', 'outdated'], deps)).toBe(0);
       expect(await main(['agent', 'upgrade', 'codex'], deps)).toBe(0);
       expect(await main(['image', 'list'], deps)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recreates the container when activation changes the image', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const before = world.containers.get(`sandbox-${id}`);
+      expect(before?.running).toBe(true);
+      world.images.add('sandbox-workspace:next');
+      expect(await main(['image', 'activate', 'sandbox-workspace:next', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      const after = world.containers.get(`sandbox-${id}`);
+      expect(after?.imageId).toBe(world.imageIdOf('sandbox-workspace:next'));
+      expect(out.join('')).toContain('ready');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('wires upgrade to version resolution and candidate build', async () => {
+    const { home, root, deps, out } = setup();
+    try {
+      expect(await main(['agent', 'upgrade', 'codex'], deps)).toBe(0);
+      expect(out.join('')).toContain('Activate explicitly');
+      expect(await main(['agent', 'upgrade', 'nope'], deps)).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('copies state volumes on migrate apply and guards the root mount', async () => {
+    const { home, root, world, deps, out, err } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      world.seedLegacy();
+      expect(await main(['workspace', 'migrate', '--workspace', root, '--source', 'claude-relay', '--apply'], deps)).toBe(0);
+      expect(out.join('')).toContain('state volumes copied');
+      expect([...world.volumes].some((name) => name.startsWith('sandbox-home-'))).toBe(true);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--drop-mount', root], deps)).toBe(2);
+      expect(err.join('')).toMatch(/cannot drop the workspace root/);
+      expect(await main(['workspace', 'register', '--root', '--json'], deps)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
