@@ -18,17 +18,21 @@ export function buildCandidate(
   runner: ImageRunner,
   contextDir: string,
   candidateTag: string,
+  versionOverrides: Record<string, string> = {},
 ): { tag: string; versions: Record<string, string> } {
   const buildArgs: Record<string, string> = {};
+  const expected: Record<string, string> = {};
   for (const def of AGENT_DEFINITIONS) {
-    if (def.npmPackage) buildArgs[`${def.name.toUpperCase()}_VERSION`] = def.pinnedVersion;
+    if (!def.npmPackage) continue;
+    const version = versionOverrides[def.npmPackage] ?? def.pinnedVersion;
+    buildArgs[`${def.name.toUpperCase()}_VERSION`] = version;
+    expected[def.npmPackage] = version;
   }
   const tag = runner.buildImage({ contextDir, tag: candidateTag, buildArgs });
   const versions = runner.inspectBinaryVersions(tag);
-  for (const def of AGENT_DEFINITIONS) {
-    if (!def.npmPackage) continue;
-    if (versions[def.npmPackage] !== def.pinnedVersion) {
-      throw new Error(`candidate image reports ${def.npmPackage}@${versions[def.npmPackage] ?? 'unknown'}, expected ${def.pinnedVersion}`);
+  for (const [npmPackage, want] of Object.entries(expected)) {
+    if (versions[npmPackage] !== want) {
+      throw new Error(`candidate image reports ${npmPackage}@${versions[npmPackage] ?? 'unknown'}, expected ${want}`);
     }
   }
   if (!runner.verifyCandidate(tag)) {
