@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 
 import { lookupWorkspace, type Registry } from './registry.js';
 
-export type ResolutionKind = 'registered' | 'unregistered-git' | 'unregistered-cwd';
+export type ResolutionKind = 'registered' | 'unregistered-explicit' | 'unregistered-git' | 'unregistered-cwd';
 
 export interface Resolution {
   kind: ResolutionKind;
@@ -19,13 +19,27 @@ export interface ResolveInputs {
   canonicalize?: (path: string) => string;
 }
 
-const defaultCanonicalize = (path: string): string => {
+export const defaultCanonicalize = (path: string): string => {
   try {
     return realpathSync(path);
   } catch {
     return path;
   }
 };
+
+function stripTrailingSlash(path: string): string {
+  if (path.length > 1) return path.replace(/\/+$/, '');
+  return path;
+}
+
+/** Ancestor-or-self comparison that tolerates trailing slashes and the filesystem root. */
+export function isAncestorOrSelf(parent: string, child: string): boolean {
+  const normParent = stripTrailingSlash(parent);
+  const normChild = stripTrailingSlash(child);
+  if (normParent === normChild) return true;
+  if (normParent === '/') return normChild.startsWith('/');
+  return normChild.startsWith(`${normParent}/`);
+}
 
 /**
  * Deterministic workspace resolution.
@@ -37,7 +51,7 @@ export function resolveWorkspace(inputs: ResolveInputs): Resolution {
   if (inputs.explicitRoot) {
     const root = canonicalize(inputs.explicitRoot);
     const found = lookupWorkspace(inputs.registry, root) !== null;
-    return { kind: found ? 'registered' : 'unregistered-cwd', root, registered: found };
+    return { kind: found ? 'registered' : 'unregistered-explicit', root, registered: found };
   }
   const cwd = canonicalize(inputs.cwd);
   const ancestor = nearestRegisteredAncestor(inputs.registry, cwd, canonicalize);
@@ -57,8 +71,8 @@ function nearestRegisteredAncestor(
   let best: string | null = null;
   for (const entry of Object.values(registry.workspaces)) {
     const root = canonicalize(entry.root);
-    if (cwd === root || cwd.startsWith(`${root}/`)) {
-      if (!best || root.length > best.length) best = root;
+    if (isAncestorOrSelf(root, cwd)) {
+      if (!best || stripTrailingSlash(root).length > stripTrailingSlash(best).length) best = root;
     }
   }
   return best;

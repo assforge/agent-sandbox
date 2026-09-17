@@ -13,16 +13,6 @@ export function configurationFingerprint(parts: string[]): string {
   return createHash('sha256').update(parts.join('\n'), 'utf8').digest('hex').slice(0, 16);
 }
 
-export interface ProbeResult {
-  tokenMatches: boolean;
-  processAlive: boolean;
-  fingerprintMatches: boolean;
-}
-
-export function isReady(result: ProbeResult): boolean {
-  return result.tokenMatches && result.processAlive && result.fingerprintMatches;
-}
-
 /**
  * Readiness is specific to the current startup generation. A persistent
  * state file from a previous run can never satisfy it.

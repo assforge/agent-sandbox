@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addInstance,
+  basenameOf,
+  defaultRegistryPath,
   emptyRegistry,
   loadRegistry,
   lookupWorkspace,
@@ -23,6 +25,32 @@ describe('workspaceId', () => {
 
   it('digests the full root so same basenames do not alias', () => {
     expect(rootDigest('/x/microsb')).not.toBe(rootDigest('/y/microsb'));
+  });
+
+  it('sanitizes ids to the docker and tmux charset', () => {
+    expect(workspaceId('/Users/a/My Project')).toMatch(/^my-project-[0-9a-f]{12}$/);
+    expect(workspaceId('/')).toMatch(/^workspace-[0-9a-f]{12}$/);
+    expect(basenameOf('/w/repo/')).toBe('repo');
+    expect(basenameOf('relative')).toBe('relative');
+  });
+
+  it('rejects forbidden mounts at registration', () => {
+    const registry = emptyRegistry();
+    expect(() => registerWorkspace(registry, '/', [], { homeDir: '/Users/a' })).toThrow(/refused mount/);
+    expect(() => registerWorkspace(registry, '/Users/a', [], { homeDir: '/Users/a' })).toThrow(/HOME/);
+    expect(() => registerWorkspace(registry, '/w', ['/Users/a/.'], { homeDir: '/Users/a' })).toThrow(/HOME/);
+  });
+
+  it('is idempotent for the same root and records previous images', () => {
+    const registry = emptyRegistry();
+    const first = registerWorkspace(registry, '/w/microsb', ['/w/microsb']);
+    expect(registerWorkspace(registry, '/w/microsb', ['/other'])).toBe(first);
+    expect(first.mounts).toEqual(['/w/microsb']);
+    expect(first.previousImage).toBeNull();
+  });
+
+  it('resolves the default registry path under the home directory', () => {
+    expect(defaultRegistryPath('/Users/a')).toBe('/Users/a/.sandbox/registry.json');
   });
 });
 
@@ -49,6 +77,11 @@ describe('registry persistence', () => {
       expect(() => loadRegistry(bad)).toThrow(/not valid JSON/);
       writeFileSync(bad, '{"version":2,"workspaces":{}}', 'utf8');
       expect(() => loadRegistry(bad)).toThrow(/unsupported version/);
+      writeFileSync(bad, '42', 'utf8');
+      expect(() => loadRegistry(bad)).toThrow(/unexpected shape/);
+      writeFileSync(bad, '{"version":1}', 'utf8');
+      expect(() => loadRegistry(bad)).toThrow(/unsupported version/);
+      expect(() => loadRegistry(dir)).toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

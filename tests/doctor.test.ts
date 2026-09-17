@@ -29,6 +29,23 @@ describe('runDoctor', () => {
     expect(doctorExitCode(noDocker)).toBe(1);
   });
 
+  it('fails old or unparsable node versions', () => {
+    const old = runDoctor({ ...healthy, nodeVersion: 'v18.3.0' }, 'sha256:abc');
+    expect(old.find((check) => check.id === 'node')?.status).toBe('fail');
+    const nan = runDoctor({ ...healthy, nodeVersion: 'bogus' }, 'sha256:abc');
+    expect(nan.find((check) => check.id === 'node')?.status).toBe('fail');
+    expect(doctorExitCode(old)).toBe(1);
+  });
+
+  it('gives platform-specific tmux remediation and maps warnings to exit 0', () => {
+    const linux = runDoctor({ ...healthy, platform: 'linux', pathLookup: () => null }, null);
+    expect(linux.find((check) => check.id === 'tmux')?.remediation).toMatch(/apt-get install tmux/);
+    const unknown = runDoctor({ ...healthy, platform: 'win32', pathLookup: () => null }, null);
+    expect(unknown.find((check) => check.id === 'tmux')?.remediation).toMatch(/package manager/);
+    const warnOnly = runDoctor(healthy, null);
+    expect(warnOnly.every((check) => check.status !== 'fail')).toBe(true);
+    expect(doctorExitCode(warnOnly)).toBe(0);
+  });
   it('renders grouped English text without arrow glyphs', () => {
     const text = renderDoctorText(runDoctor({ ...healthy, commandSucceeds: () => false }, null));
     expect(text).toContain('[FAIL]');

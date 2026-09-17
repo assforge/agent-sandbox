@@ -3,9 +3,11 @@ export interface ExecSpec {
   args: string[];
 }
 
+export const AGENT_USER = 'agent';
+
 /** Fixed docker exec vector. No shell is involved, so user input is never re-evaluated. */
-export function dockerExec(container: string, workdir: string, argv: string[]): ExecSpec {
-  return { command: 'docker', args: ['exec', '-i', '-t', '-w', workdir, container, ...argv] };
+export function dockerExec(container: string, workdir: string, argv: string[], user: string = AGENT_USER): ExecSpec {
+  return { command: 'docker', args: ['exec', '-i', '-t', '-u', user, '-w', workdir, container, ...argv] };
 }
 
 export function tmuxHasSession(session: string): ExecSpec {
@@ -23,16 +25,24 @@ export function tmuxSelectWindow(session: string, window: string): ExecSpec {
   return { command: 'tmux', args: ['select-window', '-t', `${session}:${window}`] };
 }
 
-export function tmuxAttach(session: string): ExecSpec {
+/**
+ * Reconnect vector. Inside tmux the client switches; outside tmux it
+ * attaches (including over SSH, which needs no nested session). The child
+ * inherits the environment, so SSH_AUTH_SOCK and friends pass through.
+ */
+export function tmuxReattach(session: string, insideTmux: boolean): ExecSpec {
+  if (insideTmux) return { command: 'tmux', args: ['switch-client', '-t', session] };
   return { command: 'tmux', args: ['attach-session', '-t', session] };
 }
 
-export function tmuxSwitchClient(session: string): ExecSpec {
-  return { command: 'tmux', args: ['switch-client', '-t', session] };
-}
-
-/** Render a spec for display. Quoting is display-only; execution uses argv vectors. */
+/**
+ * Render a spec for display only, using POSIX shell quoting.
+ * Execution always uses the argv vector, never this string.
+ */
 export function renderSpec(spec: ExecSpec): string {
-  const parts = [spec.command, ...spec.args];
-  return parts.map((part) => (/^[A-Za-z0-9_./:=-]+$/.test(part) ? part : JSON.stringify(part))).join(' ');
+  const quote = (part: string): string => {
+    if (/^[A-Za-z0-9_./:=-]+$/.test(part)) return part;
+    return `'${part.replace(/'/g, `'\\''`)}'`;
+  };
+  return [spec.command, ...spec.args].map(quote).join(' ');
 }
