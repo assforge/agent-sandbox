@@ -16,6 +16,10 @@ export function workspaceLabel(workspaceIdValue: string): string {
   return `sandbox.workspace=${workspaceIdValue}`;
 }
 
+export function networkName(workspaceIdValue: string): string {
+  return `sandbox-net-${workspaceIdValue}`;
+}
+
 /** Escape a literal name for embedding in a docker --filter regex. */
 export function escapeFilterRegex(name: string): string {
   return name.replace(/[^a-zA-Z0-9_.-]/g, (char) => `\\${char}`);
@@ -47,8 +51,7 @@ export function volumeExists(runner: CommandRunner, volume: string): boolean {
   return listed.stdout.split('\n').map((line) => line.trim()).includes(volume);
 }
 
-export function ensureVolume(runner: CommandRunner, volume: string, workspaceIdValue: string): void {
-  if (volumeExists(runner, volume)) return;
+export function ensureVolume(runner: CommandRunner, volume: string, workspaceIdValue: string): void {  if (volumeExists(runner, volume)) return;
   const created = runner.run('docker', ['volume', 'create', '--label', MANAGED_LABEL, '--label', workspaceLabel(workspaceIdValue), volume]);
   if (created.status !== 0) {
     throw new Error(`cannot create volume ${volume}: ${created.stderr.trim()}`);
@@ -60,14 +63,63 @@ export interface CreateOptions {
   workdir: string;
   mounts: string[];
   homeVolume: string;
+  network: string;
   generation: string;
   fingerprint: string;
+}
+
+/**
+ * Per-workspace bridge network. A restricted network is internal: the
+ * container keeps DNS for its own name only and no route outside, which
+ * holds on both Docker Desktop and Linux daemons. Open networks are
+ * ordinary bridges and must be an explicit choice, never a default leak.
+ * The internal flag is create-time immutable: a policy switch recreates
+ * the network once no container is attached to it.
+ */
+export function ensureNetwork(runner: CommandRunner, network: string, workspaceIdValue: string, restricted: boolean): void {
+  const listed = runner.run('docker', ['network', 'ls', '--filter', `name=^${escapeFilterRegex(network)}$`, '--format', '{{.Name}}']);
+  const exists = listed.status === 0 && listed.stdout.split('\n').map((line) => line.trim()).includes(network);
+  if (exists) {
+    if (networkInternal(runner, network) === restricted) return;
+    const attached = runner.run('docker', ['network', 'inspect', '--format', '{{len .Containers}}', network]);
+    if (attached.status === 0 && attached.stdout.trim() !== '0' && attached.stdout.trim() !== '<no value>') {
+      throw new Error(`network ${network} is attached; stop the workspace before switching policy`);
+    }
+    const removed = runner.run('docker', ['network', 'rm', network]);
+    if (removed.status !== 0) {
+      throw new Error(`cannot recreate network ${network}: ${removed.stderr.trim()}`);
+    }
+  }
+  const args = ['network', 'create', '--label', MANAGED_LABEL, '--label', workspaceLabel(workspaceIdValue)];
+  if (restricted) args.push('--internal');
+  args.push(network);
+  const created = runner.run('docker', args);
+  if (created.status !== 0) {
+    throw new Error(`cannot create network ${network}: ${created.stderr.trim()}`);
+  }
+}
+
+/** Names of networks attached to a container (empty when undeterminable). */
+export function containerNetworks(runner: CommandRunner, container: string): string[] {
+  const probed = runner.run('docker', ['inspect', '--format', '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}\n{{end}}', container]);
+  if (probed.status !== 0) return [];
+  return probed.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+}
+
+/** Whether a network is internal (null when undeterminable). */
+export function networkInternal(runner: CommandRunner, network: string): boolean | null {
+  const probed = runner.run('docker', ['network', 'inspect', '--format', '{{.Internal}}', network]);
+  if (probed.status !== 0) return null;
+  const value = probed.stdout.trim().toLowerCase();
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return null;
 }
 
 export function createContainer(runner: CommandRunner, entry: { id: string; container: string; root: string }, options: CreateOptions): void {
   ensureVolume(runner, options.homeVolume, entry.id);
   const args = [
-    'run', '-d', '--pull', 'never', '--name', entry.container,
+    'run', '-d', '--pull', 'never', '--cap-drop', 'ALL', '--network', options.network, '--name', entry.container,
     '--label', MANAGED_LABEL, '--label', workspaceLabel(entry.id),
     '-v', `${entry.root}:${options.workdir}:rw`,
     '-v', `${options.homeVolume}:/home/agent`,

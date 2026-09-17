@@ -14,6 +14,7 @@ import {
   ensureVolume,
   imageExists,
   listManagedContainers,
+  networkName,
   type CommandRunner,
   type RunResult,
 } from '../docker.js';
@@ -220,6 +221,14 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const registry = loadRegistryOrThrow(deps);
       const resolution = resolveWorkspace({ explicitRoot: parsed.workspace, cwd: deps.cwd, registry });
       const current = resolution.registered ? lookupWorkspace(registry, resolution.root) : null;
+      const network = current ? networkName(current.id) : '';
+      const networkListed = current
+        ? deps.runner.run('docker', ['network', 'ls', '--filter', `name=^${network}$`, '--format', '{{.Name}}'])
+        : null;
+      const networkExists =
+        networkListed !== null &&
+        networkListed.status === 0 &&
+        networkListed.stdout.split('\n').map((line) => line.trim()).includes(network);
       const checks = runDoctor(
         {
           nodeVersion: deps.nodeVersion,
@@ -227,7 +236,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           commandSucceeds: deps.commandSucceeds,
           platform: deps.platform,
         },
-        current?.image ?? null,
+        { image: current?.image ?? null, network: current ? current.network : null, networkExists },
       );
       deps.stdout(parsed.json ? renderDoctorJson(checks) : renderDoctorText(checks));
       return doctorExitCode(checks);
@@ -395,7 +404,11 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const entry = await resolveAndEnsure(deps, registry, workspace, null);
       const addMount = takeRestOption(rest, ['--add-mount']);
       const dropMount = takeRestOption(rest, ['--drop-mount']);
-      if (!addMount && !dropMount) {
+      const network = takeRestOption(rest, ['--network']);
+      if (network !== undefined && network !== 'open' && network !== 'restricted') {
+        throw new UsageError('workspace configure --network must be open or restricted');
+      }
+      if (!addMount && !dropMount && network === undefined) {
         deps.stdout(`${JSON.stringify(redactedConfig(entry), null, 2)}\n`);
         return 0;
       }
@@ -406,9 +419,13 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         deps.stdout(`plan: add mount ${canonical} to ${entry.id}\n`);
       }
       if (dropMount) deps.stdout(`plan: drop mount ${dropMount} from ${entry.id}\n`);
-      const approved = await deps.confirm('apply these mount changes?');
+      if (network !== undefined && network !== entry.network) {
+        deps.stdout(`plan: switch network ${entry.network} -> ${network} (recreates the container on next start)\n`);
+      }
+      const approved = await deps.confirm('apply these changes?');
       if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
       if (addMount && !entry.mounts.includes(defaultCanonicalize(addMount))) entry.mounts.push(defaultCanonicalize(addMount));
+      if (network !== undefined) entry.network = network;
       if (dropMount) {
         const canonicalDrop = defaultCanonicalize(dropMount);
         if (normalizeLexical(canonicalDrop) === normalizeLexical(entry.root)) {

@@ -69,6 +69,7 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     session: requiredString(record, 'session'),
     instances: [],
     homeVolume: requiredString(record, 'homeVolume'),
+    network: record['network'] === 'restricted' ? 'restricted' : 'open',
     mounts: Array.isArray(record['mounts']) ? (record['mounts'] as string[]) : [],
   };
   registry.workspaces[id] = entry;

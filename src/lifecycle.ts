@@ -1,8 +1,12 @@
 import { checkReadiness, checkRestarted, configurationFingerprint, freshGeneration } from './readiness.js';
 import {
   containerImageId,
+  containerNetworks,
   containerState,
   createContainer,
+  ensureNetwork,
+  networkInternal,
+  networkName,
   readReadyJson,
   referenceImageId,
   removeContainer,
@@ -38,16 +42,28 @@ export function ensureReady(
     throw new Error(`container name is owned by another setup: ${entry.container}; refusing to mutate`);
   }
   const generation = freshGeneration();
-  const fingerprint = configurationFingerprint([entry.root, entry.image ?? '', options.image, ...entry.mounts]);
+  const network = networkName(entry.id);
+  const fingerprint = configurationFingerprint([entry.root, entry.image ?? '', options.image, entry.network, ...entry.mounts]);
   const attempts = options.probes ?? 30;
   const interval = options.probeIntervalMs ?? 1000;
   if (state !== 'absent') {
-    // A selected image that no longer matches the running container means
-    // an activation happened while it ran: cut over by recreating it.
-    // Stopped containers keep their image; only a changed selection recreates.
+    // A policy switch orphans the attached container: it must go before
+    // the network itself can be recreated. The switch was confirmed at
+    // configure time and disclosed as a recreate-on-next-start.
+    const internal = networkInternal(runner, network);
+    if (internal !== null && internal !== (entry.network === 'restricted')) {
+      removeContainer(runner, entry.container);
+      state = 'absent';
+    }
+  }
+  ensureNetwork(runner, network, entry.id, entry.network === 'restricted');
+  if (state !== 'absent') {
+    // Cut over by recreating when the image or the network attachment no
+    // longer matches the running container.
     const runningId = containerImageId(runner, entry.container);
     const desiredId = referenceImageId(runner, options.image);
-    if (runningId && desiredId && runningId !== desiredId) {
+    const attached = containerNetworks(runner, entry.container);
+    if ((runningId && desiredId && runningId !== desiredId) || !attached.includes(network)) {
       removeContainer(runner, entry.container);
       state = 'absent';
     }
@@ -58,6 +74,7 @@ export function ensureReady(
       workdir: CONTAINER_WORKDIR,
       mounts: entry.mounts.length > 0 ? entry.mounts : [entry.root],
       homeVolume: entry.homeVolume,
+      network,
       generation,
       fingerprint,
     });
