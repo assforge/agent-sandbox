@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
@@ -8,7 +8,15 @@ import { parseArgs, UsageError } from '../cli.js';
 import { defaultRegistryPath, loadRegistry, lookupWorkspace } from '../registry.js';
 import { resolveWorkspace } from '../resolve.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, imageHelp, SANDBOX_VERSION, topHelp, workspaceHelp } from '../help.js';
+import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
+
+/** Single source of truth: the package manifest next to dist/. */
+function packageVersion(): string {
+  const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+  const parsed = JSON.parse(raw) as { version?: unknown };
+  if (typeof parsed.version !== 'string') throw new Error('package.json has no version string');
+  return parsed.version;
+}
 
 export interface MainDeps {
   cwd: string;
@@ -72,7 +80,7 @@ export function main(argv: string[], deps: MainDeps): number {
       deps.stdout(topHelp());
       return 0;
     case 'version':
-      deps.stdout(`sandbox ${SANDBOX_VERSION}\n`);
+      deps.stdout(`sandbox ${packageVersion()}\n`);
       return 0;
     case 'doctor': {
       let registry;
@@ -127,7 +135,18 @@ export function main(argv: string[], deps: MainDeps): number {
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (invokedDirectly) {
+// argv[1] may be a symlink (global installs link bin/ to the package
+// dist). Compare resolved paths so the entry point always fires.
+function invokedAsMain(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedAsMain()) {
   process.exit(main(process.argv.slice(2), realDeps()));
 }
