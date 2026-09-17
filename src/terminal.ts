@@ -62,6 +62,14 @@ export function respawnWindow(runner: CommandRunner, session: string, window: st
   }
 }
 
+/** Destroy a session and all its windows. Used only by unregister. */
+export function killSession(runner: CommandRunner, session: string): void {
+  const killed = runner.run('tmux', ['kill-session', '-t', session]);
+  if (killed.status !== 0) {
+    throw new Error(`cannot kill tmux session ${session}: ${killed.stderr.trim()}`);
+  }
+}
+
 /** Reconnect: switch the client inside tmux (SSH included), attach otherwise. */
 export function reattach(runner: CommandRunner, session: string, insideTmux: boolean): void {
   const spec = tmuxReattach(session, insideTmux);

@@ -24,6 +24,7 @@ import {
   imageExists,
   listManagedContainers,
   networkName,
+  removeContainer,
   type CommandRunner,
   type RunResult,
 } from '../docker.js';
@@ -42,7 +43,7 @@ import {
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { dockerExec } from '../session.js';
-import { openAgentWindow, paneAlive, reattach, sessionAlive, assertWindowName } from '../terminal.js';
+import { openAgentWindow, paneAlive, reattach, sessionAlive, assertWindowName, killSession } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, credentialsHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
 
@@ -349,6 +350,12 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
     }
+    case 'unregister': {
+      const registry = loadRegistryOrThrow(deps);
+      const raw = parsed.root ?? deps.cwd;
+      const root = defaultCanonicalize(raw);
+      return unregisterWorkspace(deps, registry, root);
+    }
     case 'agentAdmin':
       return agentCommand(deps, parsed.action, parsed.rest);
     case 'credentials':
@@ -366,7 +373,40 @@ function takeRestOption(rest: string[], names: string[]): string | undefined {
   return value;
 }
 
-/** Roster windows with no live pane. Empty when the session is absent. */
+/** Remove a workspace registration. Stops the container and kills the
+ * session after confirmation when anything is live. Volumes, networks,
+ * images, and credential files are always kept: unregister forgets the
+ * mapping, it never purges data. */
+async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: string): Promise<number> {
+  const entry = lookupWorkspace(registry, root);
+  if (!entry) {
+    throw new CliError(`workspace is not registered: ${root}`, 1);
+  }
+  let state = containerState(deps.runner, entry.container, entry.id);
+  const alive = sessionAlive(deps.runner, entry.session);
+  const live = state === 'running' || alive || entry.instances.length > 0;
+  if (live) {
+    const approved = await deps.confirm(
+      `unregister ${entry.id}? This stops its container and kills its tmux session. Volumes, networks, images, and credentials are kept.`,
+    );
+    if (!approved) throw new CliError('unregister cancelled; nothing was changed', 1);
+  }
+  const handle = acquireLock(deps.lockDir, entry.id);
+  try {
+    if (state === 'running') {
+      stopWorkspace(deps.runner, entry);
+      state = 'stopped';
+    }
+    if (state === 'stopped') removeContainer(deps.runner, entry.container);
+    if (sessionAlive(deps.runner, entry.session)) killSession(deps.runner, entry.session);
+    delete registry.workspaces[entry.id];
+    saveRegistry(registryPathOf(deps), registry);
+    deps.stdout(`unregistered ${entry.id}; volumes, networks, images, and credentials kept\n`);
+    return 0;
+  } finally {
+    handle.release();
+  }
+}/** Roster windows with no live pane. Empty when the session is absent. */
 function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
   if (!sessionAlive(deps.runner, entry.session)) return [];
   const dead: string[] = [];
@@ -436,6 +476,10 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       saveRegistry(registryPathOf(deps), registry);
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
+    }
+    case 'unregister': {
+      const root = workspace ? defaultCanonicalize(workspace) : defaultCanonicalize(deps.cwd);
+      return unregisterWorkspace(deps, registry, root);
     }
     case 'start': {
       const entry = await resolveAndEnsure(deps, registry, workspace);

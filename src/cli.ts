@@ -7,6 +7,7 @@ export type ParsedCommand =
   | { kind: 'doctor'; json: boolean; workspace?: string }
   | { kind: 'workspace'; action: string; rest: string[]; workspace?: string }
   | { kind: 'register'; root?: string; workspace?: string }
+  | { kind: 'unregister'; root?: string; workspace?: string }
   | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string }
   | { kind: 'credentials'; action: string; rest: string[]; workspace?: string }
   | { kind: 'image'; action: string; rest: string[]; workspace?: string };
@@ -52,12 +53,13 @@ export function parseArgs(argv: string[]): ParsedCommand {
     return { kind: 'bare', workspace, noAttach };
   }
   const [first, ...rest] = args;
-  if (first === 'register') {
-    if (rest.length > 1) throw new UsageError('sandbox register takes at most one path');
+  if (first === 'register' || first === 'unregister') {
+    if (rest.length > 1) throw new UsageError(`sandbox ${first} takes at most one path`);
     const root = rest[0];
     if (root !== undefined && root.startsWith('-')) throw new UsageError(`unexpected option: ${root}`);
-    if (forwarded.length > 0) throw new UsageError('sandbox register does not forward arguments');
-    return { kind: 'register', root, workspace };
+    if (forwarded.length > 0) throw new UsageError(`sandbox ${first} does not forward arguments`);
+    if (first === 'register') return { kind: 'register', root, workspace };
+    return { kind: 'unregister', root, workspace };
   }  if (first === 'shell') {
     if (rest.length > 2) throw new UsageError('sandbox shell takes at most --name <name>');
     const name = takeOption(rest, ['--name']);

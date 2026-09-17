@@ -495,6 +495,27 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('unregisters only after confirmation and keeps data resources', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['unregister', root], deps)).toBe(1);
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      const deny = { ...deps, assumeYes: false, confirm: async () => false };
+      expect(await main(['unregister', root], deny)).toBe(1);
+      expect(await main(['unregister', root], deps)).toBe(0);
+      expect(out.join('')).toContain('unregistered');
+      expect(loadRegistry(join(home, '.sandbox', 'registry.json')).workspaces).toEqual({});
+      expect(world.volumes.size).toBeGreaterThan(0);
+      expect(world.containers.size).toBe(0);
+      expect(await main(['workspace', 'unregister', '--workspace', root], deps)).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('resolves a git subdirectory to its worktree root', async () => {
     const { home, root, world, deps, out } = setup();
     try {

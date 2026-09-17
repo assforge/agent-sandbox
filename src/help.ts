@@ -33,6 +33,10 @@ Commands:
   sandbox register [path]
     Register a workspace root. Defaults to the current directory.
     Short for sandbox workspace register --root <path>.
+  sandbox unregister [path]
+    Forget a workspace root after confirmation when anything is live.
+    Volumes, networks, images, and credentials are always kept.
+    Short for sandbox workspace unregister.
   sandbox doctor [--json]
     Read-only diagnostics with remediation commands.
   sandbox workspace list [--json]
@@ -107,8 +111,8 @@ ${SHARED_HELP}
 export function workspaceHelp(): string {
   return `Usage: sandbox workspace <action>
 
-Actions: list, status, register, start, stop, attach, reopen, logs,
-exec, configure, backup, restore, migrate.
+Actions: list, status, register, unregister, start, stop, attach, reopen,
+logs, exec, configure, backup, restore, migrate.
 
 start prepares the environment without attaching. attach only reconnects
 and fails when the environment is absent. reopen recreates every
