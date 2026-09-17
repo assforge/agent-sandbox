@@ -6,10 +6,19 @@ export interface ExecSpec {
 export const AGENT_USER = 'agent';
 
 /** Fixed docker exec vector. No shell is involved, so user input is never re-evaluated. */
-export function dockerExec(container: string, workdir: string, argv: string[], user: string = AGENT_USER, tty = true): ExecSpec {
+export function dockerExec(
+  container: string,
+  workdir: string,
+  argv: string[],
+  user: string = AGENT_USER,
+  tty = true,
+  env: Record<string, string> = {},
+): ExecSpec {
   const args = ['exec', '-i'];
   if (tty) args.push('-t');
-  args.push('-u', user, '-w', workdir, container, ...argv);
+  args.push('-u', user);
+  for (const [key, value] of Object.entries(env)) args.push('-e', `${key}=${value}`);
+  args.push('-w', workdir, container, ...argv);
   return { command: 'docker', args };
 }
 

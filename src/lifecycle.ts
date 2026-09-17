@@ -17,6 +17,20 @@ import {
 import type { WorkspaceEntry } from './registry.js';
 
 export const CONTAINER_WORKDIR = '/home/agent/work';
+export const INSTANCE_HOME_BASE = '/home/agent/instances';
+
+/** Per-instance HOME directory inside the container. */
+export function instanceHome(instance: string): string {
+  return `${INSTANCE_HOME_BASE}/${instance}`;
+}
+
+/** Create the instance HOME before launch so agents land in owned state. */
+export function ensureInstanceHome(runner: CommandRunner, container: string, instance: string): void {
+  const created = runner.run('docker', ['exec', '-u', 'agent', container, 'mkdir', '-p', instanceHome(instance)]);
+  if (created.status !== 0) {
+    throw new Error(`cannot prepare instance home for ${instance}: ${created.stderr.trim()}`);
+  }
+}
 
 export interface EnsureOptions {
   image: string;

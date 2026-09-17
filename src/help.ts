@@ -29,6 +29,10 @@ Commands:
   sandbox workspace configure
   sandbox workspace backup --output <path>
   sandbox workspace migrate --source claude-relay [--apply]
+  sandbox credentials list [--json]
+  sandbox credentials show --instance <name>
+  sandbox credentials set --instance <name> --file <path>
+  sandbox credentials clear --instance <name>
   sandbox agent list [--json]
   sandbox agent outdated [--json]
   sandbox agent upgrade <agent|all>
@@ -82,6 +86,26 @@ agent upgrade and image build only produce a candidate. activate is the
 explicit, separate interruption and cutover step. Interrupting running
 processes is disclosed and confirmed first. rollback requires explicit
 activation and does not reverse a data migration.
+
+${SHARED_HELP}
+`;
+}
+
+export function credentialsHelp(): string {
+  return `Usage: sandbox credentials <action>
+
+Actions: list, show, set, clear. All actions take --instance <name>;
+set additionally takes --file <path> with KEY=VALUE lines.
+
+Credential files live host-side under ~/.sandbox/<workspace>/ and are
+injected as process environment only into that instance's window. They
+are never accepted as command-line arguments, never baked into images,
+and never printed: show displays key names with masked values.
+
+Each instance also gets its own HOME directory inside the container,
+so agent configuration and history do not cross between instances of
+one workspace. Instances of one container can still read one another's
+files; the isolation boundary is the container, not the window.
 
 ${SHARED_HELP}
 `;
