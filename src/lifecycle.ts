@@ -10,6 +10,7 @@ import {
   readReadyJson,
   referenceImageId,
   removeContainer,
+  sameImageId,
   startContainer,
   stopContainer,
   type CommandRunner,
@@ -77,7 +78,7 @@ export function ensureReady(
     const runningId = containerImageId(runner, entry.container);
     const desiredId = referenceImageId(runner, options.image);
     const attached = containerNetworks(runner, entry.container);
-    if ((runningId && desiredId && runningId !== desiredId) || !attached.includes(network)) {
+    if ((runningId && desiredId && !sameImageId(runningId, desiredId)) || !attached.includes(network)) {
       removeContainer(runner, entry.container);
       state = 'absent';
     }
@@ -101,11 +102,21 @@ export function ensureReady(
     }
     throw new Error(`container ${entry.container} did not reach readiness; launch no agent`);
   }
+  // A running container with the current fingerprint is already ready:
+  // only a stopped container must prove a fresh start via its timestamp.
+  // The generation token guards creation; after that, the fingerprint
+  // binds the container to the current config, and only the entrypoint
+  // (rerun on every real start) can write a matching fresh file.
+  const wasStopped = state === 'stopped';
   const startEpoch = Math.floor(Date.now() / 1000);
   startContainer(runner, entry.container);
   for (let i = 0; i < attempts; i += 1) {
     const observed = readReadyJson(runner, entry.container);
-    if (checkRestarted(observed, fingerprint, startEpoch)) {
+    if (!observed || observed.fingerprint !== fingerprint) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
+      continue;
+    }
+    if (!wasStopped || checkRestarted(observed, fingerprint, startEpoch)) {
       return { generation, fingerprint };
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);

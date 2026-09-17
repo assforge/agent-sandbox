@@ -4,11 +4,18 @@ import { tmuxNewWindow, tmuxReattach, tmuxSelectWindow, type ExecSpec } from './
 /**
  * Session lookup via list-sessions (exit 0, parsed output) because
  * `tmux has-session` writes to the terminal past pipes on a miss.
+ * Retried: long-lived servers under heavy polling have been observed
+ * to intermittently omit fresh sessions from a single listing.
  */
-export function sessionAlive(runner: CommandRunner, session: string): boolean {
-  const listed = runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
-  if (listed.status !== 0) return false;
-  return listed.stdout.split('\n').map((line) => line.trim()).includes(session);
+export function sessionAlive(runner: CommandRunner, session: string, attempts = 3): boolean {
+  for (let i = 0; i < attempts; i += 1) {
+    const listed = runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
+    if (listed.status === 0 && listed.stdout.split('\n').map((line) => line.trim()).includes(session)) {
+      return true;
+    }
+    if (i + 1 < attempts) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+  return false;
 }
 
 export function newSession(runner: CommandRunner, session: string, window: string, workdir: string, command: ExecSpec): void {
@@ -39,6 +46,22 @@ export function selectWindow(runner: CommandRunner, session: string, window: str
   }
 }
 
+/** True when the window's active pane is alive. A surviving window name with a dead pane must not be reused as-is. */
+export function paneAlive(runner: CommandRunner, session: string, window: string): boolean {
+  const probed = runner.run('tmux', ['list-panes', '-t', `${session}:${window}`, '-F', '#{pane_dead}']);
+  if (probed.status !== 0) return false;
+  const flags = probed.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  return flags.length > 0 && flags.every((flag) => flag === '0');
+}
+
+/** Relaunch the command in a dead window instead of attaching to a corpse. */
+export function respawnWindow(runner: CommandRunner, session: string, window: string, launch: ExecSpec): void {
+  const respawned = runner.run('tmux', ['respawn-pane', '-t', `${session}:${window}`, '-k', launch.command, ...launch.args]);
+  if (respawned.status !== 0) {
+    throw new Error(`cannot respawn tmux window ${window}: ${respawned.stderr.trim()}`);
+  }
+}
+
 /** Reconnect: switch the client inside tmux (SSH included), attach otherwise. */
 export function reattach(runner: CommandRunner, session: string, insideTmux: boolean): void {
   const spec = tmuxReattach(session, insideTmux);
@@ -55,22 +78,34 @@ export function assertWindowName(name: string): void {
   }
 }
 
-/** Open an agent window: reuse the live window, create it, then select it. */
+/** Open an agent window: reuse the live window, respawn a dead one, or create it. */
 export function openAgentWindow(
   runner: CommandRunner,
   session: string,
   window: string,
   launch: ExecSpec,
   hostWorkdir: string,
-): 'reused' | 'created' {
+): 'reused' | 'respawned' | 'created' {
   if (!sessionAlive(runner, session)) {
     assertWindowName(window);
-    newSession(runner, session, window, hostWorkdir, launch);
-    return 'created';
+    try {
+      newSession(runner, session, window, hostWorkdir, launch);
+      return 'created';
+    } catch (error) {
+      // The session appeared between the lookup and the creation
+      // (concurrent creator or flaky listing): fall through to it.
+      if (!sessionAlive(runner, session)) throw error;
+    }
   }
   if (windowExists(runner, session, window)) {
+    if (paneAlive(runner, session, window)) {
+      selectWindow(runner, session, window);
+      return 'reused';
+    }
+    assertWindowName(window);
+    respawnWindow(runner, session, window, launch);
     selectWindow(runner, session, window);
-    return 'reused';
+    return 'respawned';
   }
   assertWindowName(window);
   newWindow(runner, session, window, hostWorkdir, launch);

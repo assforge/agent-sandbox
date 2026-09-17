@@ -14,11 +14,19 @@ class FakeWorld {
   containers = new Map<string, { running: boolean; owner: string; generation: string; fingerprint: string; startedAt: number; imageId: string; network: string }>();
   volumes = new Set<string>();
   networks = new Map<string, boolean>();
-  sessions = new Map<string, Set<string>>();
+  sessions = new Map<string, Map<string, boolean>>();
   images = new Set<string>(['sandbox-workspace:current']);
   failBuild = false;
 
-  imageIdOf = (image: string): string => `id-of-${image}`;
+  imageIdOf = (image: string): string => {
+    const alnum = image.replace(/[^a-zA-Z0-9]/g, '');
+    return `sha256:s${alnum.length}-fulldigest`;
+  };
+
+  shortIdOf = (image: string): string => {
+    const alnum = image.replace(/[^a-zA-Z0-9]/g, '');
+    return `s${alnum.length}`;
+  };
 
   seedLegacy(): void {
     this.containers.set('pedantic_snyder', { running: true, owner: 'legacy', generation: '', fingerprint: '', startedAt: 0, imageId: 'legacy-img', network: '' });
@@ -188,7 +196,7 @@ class FakeWorld {
     }
     if (verb === 'images' && rest[0] === '-q') {
       const image = rest[1] as string;
-      return { status: 0, stdout: this.images.has(image) ? this.imageIdOf(image) : '', stderr: '' };
+      return { status: 0, stdout: this.images.has(image) ? this.shortIdOf(image) : '', stderr: '' };
     }
     if (verb === 'ps') {
       return { status: 0, stdout: [...this.containers.keys()].join('\n'), stderr: '' };
@@ -210,18 +218,33 @@ class FakeWorld {
     if (args[0] === 'new-session') {
       const nameIndex = args.indexOf('-s');
       const windowIndex = args.indexOf('-n');
-      this.sessions.set(args[nameIndex + 1] as string, new Set([args[windowIndex + 1] as string]));
+      const name = args[nameIndex + 1] as string;
+      if (this.sessions.has(name)) return { status: 1, stdout: '', stderr: `duplicate session: ${name}` };
+      this.sessions.set(name, new Map([[args[windowIndex + 1] as string, true]]));
       return { status: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'new-window') {
       const target = (args[args.indexOf('-t') + 1] as string).replace(/:$/, '');
       const name = args[args.indexOf('-n') + 1] as string;
-      this.sessions.get(target)?.add(name);
+      this.sessions.get(target)?.set(name, true);
       return { status: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'list-windows') {
       const session = args[args.indexOf('-t') + 1] as string;
-      return { status: 0, stdout: [...(this.sessions.get(session) ?? [])].join('\n'), stderr: '' };
+      return { status: 0, stdout: [...(this.sessions.get(session) ?? new Map()).keys()].join('\n'), stderr: '' };
+    }
+    if (args[0] === 'list-panes') {
+      const target = args[args.indexOf('-t') + 1] as string;
+      const [session, window] = target.split(':');
+      const alive = this.sessions.get(session as string)?.get(window as string);
+      if (alive === undefined) return { status: 1, stdout: '', stderr: 'no such window' };
+      return { status: 0, stdout: alive ? '0' : '1', stderr: '' };
+    }
+    if (args[0] === 'respawn-pane') {
+      const target = args[args.indexOf('-t') + 1] as string;
+      const [session, window] = target.split(':');
+      this.sessions.get(session as string)?.set(window as string, true);
+      return { status: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'list-sessions') {
       return { status: 0, stdout: [...this.sessions.keys()].join('\n'), stderr: '' };
@@ -439,8 +462,7 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
-  it('reopens every registered window and reports liveness', async () => {
-    const { home, root, world, deps, out } = setup();
+  it('reopens every registered window and reports liveness', async () => {    const { home, root, world, deps, out } = setup();
     try {
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
@@ -545,6 +567,34 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['credentials', 'clear', '--workspace', root, '--instance', 'w1'], deps)).toBe(0);
       expect(await main(['credentials', 'show', '--workspace', root, '--instance', 'w1'], deps)).toBe(0);
       expect(await main(['credentials', 'help'], deps)).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('respawns dead windows on relaunch and warns on attach to stopped work', async () => {
+    const { home, root, world, deps, out, err } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      world.sessions.get(`sandbox-${id}`)?.set('codex', false);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      expect(out.join('')).toContain('respawned window codex');
+      world.sessions.get(`sandbox-${id}`)?.set('codex', false);
+      expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('workspace-windows');
+      expect(await main(['workspace', 'stop', '--workspace', root, '--yes'], deps)).toBe(0);
+      expect(await main(['workspace', 'attach', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      expect(err.join('')).toContain('is stopped');
+      const relay = join(home, 'relay.env');
+      writeFileSync(relay, 'K=a\n', 'utf8');
+      expect(await main(['credentials', 'set', '--workspace', root, '--instance', 'w1', '--file', relay], deps)).toBe(0);
+      const deny = { ...deps, assumeYes: false, confirm: async () => false };
+      expect(await main(['credentials', 'set', '--workspace', root, '--instance', 'w1', '--file', relay], deny)).toBe(1);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });

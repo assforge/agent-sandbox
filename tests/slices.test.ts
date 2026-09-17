@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { agentDefinition, outdatedAgents } from '../src/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount, validateRegistryShape } from '../src/config.js';
+import { sameImageId } from '../src/docker.js';
 import { emptyRegistry, registerWorkspace } from '../src/registry.js';
 import { activateImage, buildCandidate, recordActivation, rollbackImage } from '../src/image.js';
 import { acquireLock } from '../src/lock.js';
@@ -34,8 +35,17 @@ describe('agents', () => {
   });
 });
 
-describe('config', () => {
-  it('rejects root and HOME mounts and redacts secrets', () => {
+describe('sameImageId', () => {
+  it('matches full digests against short ids without recreating every run', () => {
+    expect(sameImageId('sha256:b0739da01b28bc99524e1c451ec33e0f8d4bdbb06d37e41766aed4ffc06bdb99', 'b0739da01b28')).toBe(true);
+    expect(sameImageId('sha256:abc', 'sha256:abc')).toBe(true);
+    expect(sameImageId('sha256:abc', 'sha256:def')).toBe(false);
+    expect(sameImageId(null, 'abc')).toBe(false);
+    expect(sameImageId('abc', null)).toBe(false);
+  });
+});
+
+describe('config', () => {  it('rejects root and HOME mounts and redacts secrets', () => {
     expect(rejectForbiddenMount('/')).toMatch(/root/);
     expect(rejectForbiddenMount(homedir())).toMatch(/HOME/);
     expect(rejectForbiddenMount(`${homedir()}/work`)).toBeNull();
