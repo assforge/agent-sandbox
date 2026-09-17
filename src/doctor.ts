@@ -13,6 +13,8 @@ export interface ProbeEnv {
   pathLookup: (name: string) => string | null;
   commandSucceeds: (command: string, args: string[]) => boolean;
   platform: NodeJS.Platform;
+  /** Container runtime under test. Defaults to Docker when omitted. */
+  runtime?: { display: string; binary: string; args: string[]; verified: boolean };
 }
 
 function hintInstallTmux(platform: NodeJS.Platform): string {
@@ -32,6 +34,7 @@ export interface WorkspacePosture {
 
 export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
+  const runtime = env.runtime ?? { display: 'Docker', binary: 'docker', args: ['info'], verified: true };
   const major = Number(env.nodeVersion.replace(/^v/, '').split('.')[0]);
   checks.push({
     id: 'node',
@@ -41,24 +44,34 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
     remediation: Number.isNaN(major) || major < 20 ? 'Install Node.js 20 or newer from https://nodejs.org' : undefined,
   });
 
-  const dockerBin = env.pathLookup('docker');
-  if (!dockerBin) {
+  const runtimeBin = env.pathLookup(runtime.binary);
+  if (!runtimeBin) {
     checks.push({
-      id: 'docker-cli',
+      id: 'runtime-cli',
       group: 'Container runtime',
       status: 'fail',
-      summary: 'Docker CLI was not found on PATH',
-      remediation: 'Install Docker from https://docs.docker.com/get-docker, then run this check again',
+      summary: `${runtime.display} CLI (${runtime.binary}) was not found on PATH`,
+      remediation: runtime.binary === 'docker'
+        ? 'Install Docker from https://docs.docker.com/get-docker, then run this check again'
+        : `Install the ${runtime.display} CLI, then run this check again`,
     });
   } else {
-    checks.push({ id: 'docker-cli', group: 'Container runtime', status: 'ok', summary: `Docker CLI found at ${dockerBin}` });
-    const daemonUp = env.commandSucceeds('docker', ['info']);
+    checks.push({ id: 'runtime-cli', group: 'Container runtime', status: 'ok', summary: `${runtime.display} CLI found at ${runtimeBin}` });
+    const daemonUp = env.commandSucceeds(runtime.binary, runtime.args);
     checks.push({
       id: 'container-runtime',
       group: 'Container runtime',
       status: daemonUp ? 'ok' : 'fail',
-      summary: daemonUp ? 'Container runtime answered docker info' : 'Docker is installed, but the daemon is unavailable',
-      remediation: daemonUp ? undefined : 'Start your configured Docker runtime and run this check again',
+      summary: daemonUp ? 'Container runtime answered the probe' : `${runtime.display} is installed, but the daemon is unavailable`,
+      remediation: daemonUp ? undefined : 'Start your configured container runtime and run this check again',
+    });
+  }
+  if (!runtime.verified) {
+    checks.push({
+      id: 'runtime-maturity',
+      group: 'Container runtime',
+      status: 'warn',
+      summary: `${runtime.display} engine is experimental: live verification pending`,
     });
   }
 

@@ -71,6 +71,8 @@ Commands:
     Store KEY=VALUE lines host-side with owner-only permissions.
     Secrets are never accepted as command-line arguments.
   sandbox credentials clear --instance <name>
+  sandbox runtime list [--json]
+  sandbox runtime use <name>
   sandbox agent list [--json]
   sandbox agent outdated [--json]
   sandbox agent upgrade <agent|all>
@@ -154,6 +156,21 @@ Each instance also gets its own HOME directory inside the container,
 so agent configuration and history do not cross between instances of
 one workspace. Instances of one container can still read one another's
 files; the isolation boundary is the container, not the window.
+
+${SHARED_HELP}
+`;
+}
+
+export function runtimeHelp(): string {
+  return `Usage: sandbox runtime <action>
+
+Actions: list, use.
+
+list shows every known container runtime with its capabilities and
+verification status. use <name> selects the host default for new
+workspaces; existing workspaces keep their recorded runtime until
+sandbox workspace configure --runtime changes them. A workspace created
+by another runtime fails closed instead of being adopted.
 
 ${SHARED_HELP}
 `;

@@ -10,6 +10,7 @@ export type ParsedCommand =
   | { kind: 'unregister'; root?: string; workspace?: string }
   | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string }
   | { kind: 'credentials'; action: string; rest: string[]; workspace?: string }
+  | { kind: 'runtime'; action: string; rest: string[] }
   | { kind: 'image'; action: string; rest: string[]; workspace?: string };
 
 export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as const;
@@ -60,7 +61,8 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (forwarded.length > 0) throw new UsageError(`sandbox ${first} does not forward arguments`);
     if (first === 'register') return { kind: 'register', root, workspace };
     return { kind: 'unregister', root, workspace };
-  }  if (first === 'shell') {
+  }
+  if (first === 'shell') {
     if (rest.length > 2) throw new UsageError('sandbox shell takes at most --name <name>');
     const name = takeOption(rest, ['--name']);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
@@ -72,13 +74,14 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (rest.length > 0) throw new UsageError('sandbox doctor takes no positional arguments');
     return { kind: 'doctor', json, workspace };
   }
-  if (first === 'workspace' || first === 'agent' || first === 'image' || first === 'credentials') {
+  if (first === 'workspace' || first === 'agent' || first === 'image' || first === 'credentials' || first === 'runtime') {
     const action = rest[0];
     if (!action) throw new UsageError(`sandbox ${first} requires an action`);
     const tail = [...rest.slice(1), ...(forwarded.length > 0 ? ['--', ...forwarded] : [])];
     if (first === 'workspace') return { kind: 'workspace', action, rest: tail, workspace };
     if (first === 'image') return { kind: 'image', action, rest: tail, workspace };
     if (first === 'credentials') return { kind: 'credentials', action, rest: tail, workspace };
+    if (first === 'runtime') return { kind: 'runtime', action, rest: tail };
     return { kind: 'agentAdmin', action, rest: tail, workspace };
   }
   if ((SUPPORTED_AGENTS as readonly string[]).includes(first)) {

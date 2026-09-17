@@ -16,9 +16,8 @@ export function workspaceLabel(workspaceIdValue: string): string {
   return `sandbox.workspace=${workspaceIdValue}`;
 }
 
-export function networkName(workspaceIdValue: string): string {
-  return `sandbox-net-${workspaceIdValue}`;
-}
+/** Moved to registry.ts (resource naming belongs to the core, not the docker dialect). */
+export { networkName } from './registry.js';
 
 /** Escape a literal name for embedding in a docker --filter regex. */
 export function escapeFilterRegex(name: string): string {
@@ -38,10 +37,11 @@ export function containerState(runner: CommandRunner, container: string, workspa
     throw new Error(`cannot list containers: ${listed.stderr.trim()}`);
   }
   if (!listed.stdout.split('\n').map((line) => line.trim()).includes(container)) return 'absent';
-  const probed = runner.run('docker', ['inspect', '--format', '{{.State.Running}}|{{index .Config.Labels "sandbox.managed"}}|{{index .Config.Labels "sandbox.workspace"}}', container]);
+  const probed = runner.run('docker', ['inspect', '--format', '{{.State.Running}}|{{index .Config.Labels "sandbox.managed"}}|{{index .Config.Labels "sandbox.workspace"}}|{{index .Config.Labels "sandbox.runtime"}}', container]);
   if (probed.status !== 0) return 'absent';
-  const [running, managed, owner] = probed.stdout.trim().split('|');
+  const [running, managed, owner, runtime] = probed.stdout.trim().split('|');
   if (managed !== 'true' || owner !== workspaceIdValue) return 'foreign';
+  if (runtime && runtime !== 'docker') return 'foreign';
   return running === 'true' ? 'running' : 'stopped';
 }
 
@@ -64,6 +64,7 @@ export interface CreateOptions {
   mounts: string[];
   homeVolume: string;
   network: string;
+  runtimeName: string;
   generation: string;
   fingerprint: string;
 }
@@ -120,7 +121,7 @@ export function createContainer(runner: CommandRunner, entry: { id: string; cont
   ensureVolume(runner, options.homeVolume, entry.id);
   const args = [
     'run', '-d', '--pull', 'never', '--cap-drop', 'ALL', '--network', options.network, '--name', entry.container,
-    '--label', MANAGED_LABEL, '--label', workspaceLabel(entry.id),
+    '--label', MANAGED_LABEL, '--label', workspaceLabel(entry.id), '--label', `sandbox.runtime=${options.runtimeName}`,
     '-v', `${entry.root}:${options.workdir}:rw`,
     '-v', `${options.homeVolume}:/home/agent`,
     '-e', `SANDBOX_GENERATION=${options.generation}`,

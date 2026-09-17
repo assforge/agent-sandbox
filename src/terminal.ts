@@ -1,6 +1,6 @@
 import type { CommandRunner } from './docker.js';
-import { tmuxNewWindow, tmuxReattach, tmuxSelectWindow, type ExecSpec } from './session.js';
-
+import { tmuxNewWindow, tmuxReattach, tmuxSelectWindow } from './session.js';
+import { assertSafeName, type ExecSpec } from './engines/types.js';
 /**
  * Session lookup via list-sessions (exit 0, parsed output) because
  * `tmux has-session` writes to the terminal past pipes on a miss.
@@ -81,9 +81,7 @@ export function reattach(runner: CommandRunner, session: string, insideTmux: boo
 
 /** Instance names travel inside tmux target syntax (session:window). */
 export function assertWindowName(name: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || name.includes(':')) {
-    throw new Error(`invalid instance name: ${name}; use letters, digits, dot, underscore, or hyphen`);
-  }
+  assertSafeName('instance', name);
 }
 
 /** Open an agent window: reuse the live window, respawn a dead one, or create it. */

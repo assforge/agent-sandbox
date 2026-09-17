@@ -4,6 +4,8 @@
  * owns its install channel and launch shape. Consumers depend on this
  * interface, never on npm or vendor specifics.
  */
+import { join } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
 
 export type AgentInstallChannel = 'npm' | 'native';
 
@@ -115,6 +117,38 @@ export function agentEngines(extraCatalog: AgentCatalogEntry[] = []): Map<string
   }
   for (const entry of BUILTIN_CATALOG) registry.set(entry.name, buildEngine(entry));
   return registry;
+}
+
+/** User-supplied catalog documents under ~/.sandbox/engines/*.json. */
+export function userEnginesDir(homeDir: string): string {
+  return join(homeDir, '.sandbox', 'engines');
+}
+
+/** Load every user catalog document. An invalid file fails closed with its path. */
+export function loadUserCatalog(homeDir: string): AgentCatalogEntry[] {
+  let files: string[];
+  try {
+    files = readdirSync(userEnginesDir(homeDir));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const entries: AgentCatalogEntry[] = [];
+  for (const file of files.filter((name) => name.endsWith('.json')).sort()) {
+    const path = join(userEnginesDir(homeDir), file);
+    let document: unknown;
+    try {
+      document = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+      throw new Error(`agent catalog file is not valid JSON: ${path}: ${(error as Error).message}`);
+    }
+    try {
+      entries.push(...loadAgentCatalog(document));
+    } catch (error) {
+      throw new Error(`agent catalog file is invalid: ${path}: ${(error as Error).message}`);
+    }
+  }
+  return entries;
 }
 
 export function agentEngine(registry: Map<string, AgentEngine>, name: string): AgentEngine {

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
-import { agentEngine, agentEngines, outdatedEngines } from '../engines/agent.js';
+import { agentEngine, agentEngines, loadUserCatalog, outdatedEngines, type AgentEngine } from '../engines/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import {
@@ -19,30 +19,29 @@ import {
 } from '../credentials.js';
 import { parseArgs, UsageError } from '../cli.js';
 import {
-  networkName,
   type CommandRunner,
   type RunResult,
 } from '../docker.js';
-import { runtimeEngine } from '../engines/runtime.js';
+import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
 import { terminalEngine } from '../engines/terminal.js';
 import { buildCandidate, activateImage, rollbackImage } from '../image.js';
 import { acquireLock } from '../lock.js';
 import { CONTAINER_WORKDIR, ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
 import { dryRunMigration } from '../migrate.js';
+import { loadHostConfig, saveHostConfig } from '../hostconfig.js';
 import {
   defaultRegistryPath,
   loadRegistry,
   lookupWorkspace,
+  networkName,
   registerWorkspace,
   saveRegistry,
   type Registry,
   type WorkspaceEntry,
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
-import { dockerExec } from '../session.js';
-import { assertWindowName } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, credentialsHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
+import { agentHelp, credentialsHelp, imageHelp, runtimeHelp, topHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
   constructor(
@@ -53,12 +52,22 @@ export class CliError extends Error {
   }
 }
 
-// Engine selection is hardcoded to the verified engines in slice 1.
-// Host-level selection with per-workspace override arrives in slice 3;
-// the call sites below already speak only the interfaces.
-const rt = runtimeEngine('docker');
+// Engine selection: host-level default from ~/.sandbox/config.json with
+// per-workspace override recorded on the entry. Unknown names fail closed.
+function selectRuntime(deps: MainDeps, entry?: WorkspaceEntry): RuntimeEngine {
+  const wanted = entry?.runtime ?? loadHostConfig(deps.homeDir).runtime;
+  const engine = RUNTIME_ENGINES[wanted];
+  if (!engine) {
+    throw new CliError(`unknown runtime engine: ${wanted}; run: sandbox runtime list`, 2);
+  }
+  return engine;
+}
+
+function agentRegistry(deps: MainDeps): Map<string, AgentEngine> {
+  return agentEngines(loadUserCatalog(deps.homeDir));
+}
+
 const term = terminalEngine('tmux');
-const agents = agentEngines();
 
 export interface MainDeps {
   cwd: string;
@@ -242,6 +251,7 @@ export async function main(argv: string[], deps: MainDeps): Promise<number> {
 
 async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
   const parsed = parseArgs(argv);
+  const agents = agentRegistry(deps);
   switch (parsed.kind) {
     case 'help':
       deps.stdout(topHelp());
@@ -262,12 +272,19 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         networkListed.status === 0 &&
         networkListed.stdout.split('\n').map((line) => line.trim()).includes(network);
       const deadWindows = current ? deadRosterWindows(deps, current) : [];
+      const doctorRt = current ? selectRuntime(deps, current) : selectRuntime(deps);
       const checks = runDoctor(
         {
           nodeVersion: deps.nodeVersion,
           pathLookup: deps.pathLookup,
           commandSucceeds: deps.commandSucceeds,
           platform: deps.platform,
+          runtime: {
+            display: doctorRt.displayName,
+            binary: doctorRt.doctorProbes.binary,
+            args: doctorRt.doctorProbes.args,
+            verified: doctorRt.verified,
+          },
         },
         { image: current?.image ?? null, network: current ? current.network : null, networkExists, deadWindows },
       );
@@ -278,12 +295,13 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     case 'shell': {
       const name = parsed.kind === 'shell' ? (parsed.name ?? 'shell') : 'shell';
       try {
-        assertWindowName(name);
+        term.assertWindowName(name);
       } catch (error) {
         throw new CliError((error as Error).message, 2);
       }
       const registry = loadRegistryOrThrow(deps);
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
+      const rt = selectRuntime(deps, entry);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
@@ -292,8 +310,8 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           saveRegistry(registryPathOf(deps), registry);
         }
         const launchEnv = launchEnvFor(deps, entry, name);
-        ensureInstanceHome(deps.runner, entry.container, name);
-        term.openAgentWindow(deps.runner, entry.session, name, dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnv), entry.root);
+        ensureInstanceHome(deps.runner, rt, entry.container, name);
+        term.openAgentWindow(deps.runner, entry.session, name, rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: ['bash'], env: launchEnv }), entry.root);
       } finally {
         handle.release();
       }
@@ -304,12 +322,13 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const def = agentEngine(agents, parsed.agent);
       const name = parsed.name ?? parsed.agent;
       try {
-        assertWindowName(name);
+        term.assertWindowName(name);
       } catch (error) {
         throw new CliError((error as Error).message, 2);
       }
       const registry = loadRegistryOrThrow(deps);
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
+      const rt = selectRuntime(deps, entry);
       const same = entry.instances.find((item) => item.name === name);
       if (same && same.kind !== parsed.agent) {
         throw new CliError(`instance name is occupied by another agent: ${name} runs ${same.kind}`, 1);
@@ -325,12 +344,12 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           saveRegistry(registryPathOf(deps), registry);
         }
         const launchEnv = launchEnvFor(deps, entry, name);
-        ensureInstanceHome(deps.runner, entry.container, name);
+        ensureInstanceHome(deps.runner, rt, entry.container, name);
         launched = term.openAgentWindow(
           deps.runner,
           entry.session,
           name,
-          dockerExec(entry.container, CONTAINER_WORKDIR, [...def.launch, ...parsed.forwarded], 'agent', true, launchEnv),
+          rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: [...def.launch, ...parsed.forwarded], env: launchEnv }),
           entry.root,
         );
       } finally {
@@ -364,6 +383,8 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return agentCommand(deps, parsed.action, parsed.rest);
     case 'credentials':
       return credentialsCommand(deps, parsed.action, parsed.rest, parsed.workspace);
+    case 'runtime':
+      return runtimeCommand(deps, parsed.action, parsed.rest);
     case 'image':
       return imageCommand(deps, parsed.action, parsed.rest, parsed.workspace);
   }
@@ -386,6 +407,7 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   if (!entry) {
     throw new CliError(`workspace is not registered: ${root}`, 1);
   }
+  const rt = selectRuntime(deps, entry);
   let state = rt.containerState(deps.runner, entry.container, entry.id);
   const alive = term.sessionAlive(deps.runner, entry.session);
   const live = state === 'running' || alive || entry.instances.length > 0;
@@ -453,6 +475,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'status': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const state = rt.containerState(deps.runner, entry.container, entry.id);
       const alive = term.sessionAlive(deps.runner, entry.session);
       const windows = alive
@@ -487,6 +510,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'start': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
@@ -498,6 +522,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'stop': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       if (entry.instances.length > 0) {
         const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Stop?`);
         if (!approved) throw new CliError('stop cancelled; nothing was changed', 1);
@@ -513,6 +538,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'attach': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       if (!term.sessionAlive(deps.runner, entry.session)) {
         throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
@@ -523,28 +549,32 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       term.reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
     }
-    case 'logs': {      const entry = await resolveAndEnsure(deps, registry, workspace);
+    case 'logs': {
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const tail = takeRestOption(rest, ['--tail']) ?? '50';
       if (!/^\d+$/.test(tail)) throw new UsageError('workspace logs --tail must be a number');
       const state = rt.containerState(deps.runner, entry.container, entry.id);
       if (state === 'absent' || state === 'foreign') {
         throw new CliError(`no container for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
-      const result = deps.runner.run('docker', ['logs', '--tail', tail, entry.container]);
+      const result = rt.containerLogs(deps.runner, entry.container, tail);
       if (result.stdout) deps.stdout(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
       if (result.stderr) deps.stderr(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);
       return result.status;
     }
     case 'reopen': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const noAttach = rest.includes('--no-attach');
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (entry.instances.length === 0) {
-          term.openAgentWindow(deps.runner, entry.session, 'shell', dockerExec(entry.container, CONTAINER_WORKDIR, ['bash'], 'agent', true, launchEnvFor(deps, entry, 'shell')), entry.root);
+          term.openAgentWindow(deps.runner, entry.session, 'shell', rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: ['bash'], env: launchEnvFor(deps, entry, 'shell') }), entry.root);
           deps.stdout('reopened shell window (no instances registered)\n');
         }
+        const agents = agentRegistry(deps);
         for (const instance of entry.instances) {
           let launchArgv: string[];
           if (instance.kind === 'shell') {
@@ -557,8 +587,8 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
               continue;
             }
           }
-          const launch = dockerExec(entry.container, CONTAINER_WORKDIR, launchArgv, 'agent', true, launchEnvFor(deps, entry, instance.name));
-          ensureInstanceHome(deps.runner, entry.container, instance.name);
+          const launch = rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: launchArgv, env: launchEnvFor(deps, entry, instance.name) });
+          ensureInstanceHome(deps.runner, rt, entry.container, instance.name);
           const outcome = term.openAgentWindow(deps.runner, entry.session, instance.window, launch, entry.root);
           deps.stdout(`${outcome} window ${instance.name} (${instance.kind})\n`);
         }
@@ -570,13 +600,14 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'exec': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const separator = rest.indexOf('--');
       const command = separator >= 0 ? rest.slice(separator + 1) : rest;
       if (command.length === 0) throw new UsageError('workspace exec requires -- <command>');
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
-        const spec = dockerExec(entry.container, CONTAINER_WORKDIR, command, 'agent', deps.stdinIsTTY);
+        const spec = rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: command, tty: deps.stdinIsTTY });
         const result = deps.runner.run(spec.command, spec.args);
         if (result.stdout) deps.stdout(result.stdout);
         if (result.stderr) deps.stderr(result.stderr);
@@ -593,7 +624,11 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (network !== undefined && network !== 'open' && network !== 'restricted') {
         throw new UsageError('workspace configure --network must be open or restricted');
       }
-      if (!addMount && !dropMount && network === undefined) {
+      const runtime = takeRestOption(rest, ['--runtime']);
+      if (runtime !== undefined && !RUNTIME_ENGINES[runtime]) {
+        throw new UsageError(`workspace configure --runtime must be one of: ${Object.keys(RUNTIME_ENGINES).join(', ')}`);
+      }
+      if (!addMount && !dropMount && network === undefined && runtime === undefined) {
         deps.stdout(`${JSON.stringify(redactedConfig(entry), null, 2)}\n`);
         return 0;
       }
@@ -607,10 +642,14 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (network !== undefined && network !== entry.network) {
         deps.stdout(`plan: switch network ${entry.network} -> ${network} (recreates the container on next start)\n`);
       }
+      if (runtime !== undefined && runtime !== entry.runtime) {
+        deps.stdout(`plan: switch runtime ${entry.runtime} -> ${runtime} (recreates the container on next start)\n`);
+      }
       const approved = await deps.confirm('apply these changes?');
       if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
       if (addMount && !entry.mounts.includes(defaultCanonicalize(addMount))) entry.mounts.push(defaultCanonicalize(addMount));
       if (network !== undefined) entry.network = network;
+      if (runtime !== undefined) entry.runtime = runtime;
       if (dropMount) {
         const canonicalDrop = defaultCanonicalize(dropMount);
         if (normalizeLexical(canonicalDrop) === normalizeLexical(entry.root)) {
@@ -623,18 +662,26 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'backup': {
       const output = takeRestOption(rest, ['--output']);
-      if (!output) throw new UsageError('workspace backup requires --output <path>');      const entry = await resolveAndEnsure(deps, registry, workspace);
+      if (!output) throw new UsageError('workspace backup requires --output <path>');
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         const receipt = backupWorkspace(
           {
             copyFromContainer: (container, from, to) => {
-              const result = deps.runner.run('docker', ['cp', `${container}:${from}`, to]);
-              if (result.status !== 0) throw new CliError(`backup copy failed: ${result.stderr.trim()}`, 1);
+              try {
+                rt.copyFromContainer(deps.runner, container, from, to);
+              } catch (error) {
+                throw new CliError((error as Error).message, 1);
+              }
             },
             copyToContainer: (container, from, to) => {
-              const result = deps.runner.run('docker', ['cp', from, `${container}:${to}`]);
-              if (result.status !== 0) throw new CliError(`restore copy failed: ${result.stderr.trim()}`, 1);
+              try {
+                rt.copyToContainer(deps.runner, container, from, to);
+              } catch (error) {
+                throw new CliError((error as Error).message, 1);
+              }
             },
           },
           entry,
@@ -650,6 +697,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const input = takeRestOption(rest, ['--input']);
       if (!input) throw new UsageError('workspace restore requires --input <path>');
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const manifestId = peekBackupId(input);
       if (manifestId !== entry.id) {
         throw new CliError(`backup belongs to ${manifestId}, not to ${entry.id}; nothing was changed`, 1);
@@ -658,14 +706,21 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (!approved) throw new CliError('restore cancelled; nothing was changed', 1);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        const restored = restoreWorkspace(          {
+        const restored = restoreWorkspace(
+          {
             copyFromContainer: (container, from, to) => {
-              const result = deps.runner.run('docker', ['cp', `${container}:${from}`, to]);
-              if (result.status !== 0) throw new CliError(`backup copy failed: ${result.stderr.trim()}`, 1);
+              try {
+                rt.copyFromContainer(deps.runner, container, from, to);
+              } catch (error) {
+                throw new CliError((error as Error).message, 1);
+              }
             },
             copyToContainer: (container, from, to) => {
-              const result = deps.runner.run('docker', ['cp', from, `${container}:${to}`]);
-              if (result.status !== 0) throw new CliError(`restore copy failed: ${result.stderr.trim()}`, 1);
+              try {
+                rt.copyToContainer(deps.runner, container, from, to);
+              } catch (error) {
+                throw new CliError((error as Error).message, 1);
+              }
             },
           },
           registry,
@@ -685,15 +740,14 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const source = takeRestOption(rest, ['--source']);
       if (source !== 'claude-relay') throw new UsageError('workspace migrate requires --source claude-relay');
       const apply = rest.includes('--apply');
-      const listed = deps.runner.run('docker', ['ps', '-a', '--format', '{{.Names}}']);
-      const volumes = deps.runner.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
-      const sessions = deps.runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
+      const inventoryRt = selectRuntime(deps);
       const existing = [
-        ...listed.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'container' as const, name })),
-        ...volumes.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'volume' as const, name })),
-        ...(sessions.status === 0 ? sessions.stdout.split('\n').map((n) => n.trim()).filter(Boolean).map((name) => ({ kind: 'session' as const, name })) : []),
+        ...inventoryRt.listContainers(deps.runner).map((name) => ({ kind: 'container' as const, name })),
+        ...inventoryRt.listVolumes(deps.runner).map((name) => ({ kind: 'volume' as const, name })),
+        ...term.listSessions(deps.runner).map((name) => ({ kind: 'session' as const, name })),
       ];
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
       const plan = dryRunMigration(existing, entry.id);
       deps.stdout(`dry-run: ${plan.mappings.length} legacy resources mapped, originals retained\n`);
       for (const mapping of plan.mappings) {
@@ -708,14 +762,10 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         for (const mapping of plan.mappings) {
           if (!mapping.copiesState || mapping.legacy.kind !== 'volume') continue;
           rt.ensureVolume(deps.runner, mapping.destination, entry.id);
-          const result = deps.runner.run('docker', [
-            'run', '--rm',
-            '-v', `${mapping.legacy.name}:/from:ro`,
-            '-v', `${mapping.destination}:/to`,
-            'alpine', 'sh', '-c', 'cp -a /from/. /to/',
-          ]);
-          if (result.status !== 0) {
-            throw new CliError(`migrate copy failed for ${mapping.legacy.name}: ${result.stderr.trim()}`, 1);
+          try {
+            rt.copyVolume(deps.runner, mapping.legacy.name, mapping.destination, entry.id);
+          } catch (error) {
+            throw new CliError(`migrate copy failed for ${mapping.legacy.name}: ${(error as Error).message}`, 1);
           }
           copied += 1;
         }
@@ -731,6 +781,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
 }
 
 async function agentCommand(deps: MainDeps, action: string, rest: string[]): Promise<number> {
+  const agents = agentRegistry(deps);
   switch (action) {
     case 'help':
       deps.stdout(agentHelp());
@@ -781,6 +832,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
     case 'upgrade': {
       const target = rest[0];
       if (!target) throw new UsageError('agent upgrade requires <agent|all>');
+      const rt = selectRuntime(deps);
       const names = target === 'all' ? [...agents.keys()] : [target];
       const overrides: Record<string, string> = {};
       const defs = names.map((name) => {
@@ -807,14 +859,15 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       const tag = `sandbox-workspace:upgrade-${Date.now()}`;
       const built = buildCandidate(
         {
-          buildImage: (plan) => dockerBuild(deps.runner, plan),
+          buildImage: (plan) => {
+            try {
+              return rt.buildImage(deps.runner, plan);
+            } catch (error) {
+              throw new CliError((error as Error).message, 1);
+            }
+          },
           inspectBinaryVersions: (candidate) => {
-            const probed = deps.runner.run('docker', [
-              'run', '--rm',
-              '-e', 'SANDBOX_GENERATION=inspect',
-              '-e', 'SANDBOX_CONFIG_FINGERPRINT=inspect',
-              candidate, 'sh', '-c', 'opencode --version; codex --version; copilot --version',
-            ]);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'opencode --version; codex --version; copilot --version']);
             const versions: Record<string, string> = {};
             const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
             if (lines[0]) versions['opencode-ai'] = lines[0];
@@ -823,12 +876,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
             return versions;
           },
           verifyCandidate: (candidate) => {
-            const probed = deps.runner.run('docker', [
-              'run', '--rm',
-              '-e', 'SANDBOX_GENERATION=upgrade-verify',
-              '-e', 'SANDBOX_CONFIG_FINGERPRINT=verify',
-              candidate, 'sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh',
-            ]);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'upgrade-verify', SANDBOX_CONFIG_FINGERPRINT: 'verify' }, ['sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
             return probed.status === 0;
           },
         },
@@ -917,26 +965,56 @@ async function credentialsCommand(deps: MainDeps, action: string, rest: string[]
   }
 }
 
-function dockerBuild(runner: CommandRunner, plan: { contextDir: string; tag: string; buildArgs: Record<string, string> }): string {
-  const args = ['build', '-f', `${plan.contextDir}/Dockerfile`];
-  for (const [key, value] of Object.entries(plan.buildArgs)) args.push('--build-arg', `${key}=${value}`);
-  args.push('-t', plan.tag, plan.contextDir);
-  const result = runner.run('docker', args);
-  if (result.status !== 0) {
-    const tail = result.stdout.split('\n').map((line) => line.trimEnd()).filter((line) => line.trim().length > 0).slice(-15).join('\n');
-    const detail = [result.stderr.trim(), tail].filter((part) => part.length > 0).join('\n');
-    throw new CliError(`image build failed:\n${detail}`, 1);
+async function runtimeCommand(deps: MainDeps, action: string, rest: string[]): Promise<number> {
+  switch (action) {
+    case 'help':
+      deps.stdout(runtimeHelp());
+      return 0;
+    case 'list': {
+      const selected = loadHostConfig(deps.homeDir).runtime;
+      const rows = Object.values(RUNTIME_ENGINES).map((engine) => ({
+        name: engine.name,
+        selected: engine.name === selected,
+        verified: engine.verified,
+        capabilities: engine.capabilities,
+      }));
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ runtimes: rows }, null, 2)}\n`);
+        return 0;
+      }
+      for (const row of rows) {
+        deps.stdout(`${row.name}${row.selected ? ' (selected)' : ''}${row.verified ? '' : ' [experimental]'}\n`);
+      }
+      return 0;
+    }
+    case 'use': {
+      const name = rest[0];
+      if (!name) throw new UsageError('runtime use requires <name>');
+      if (!RUNTIME_ENGINES[name]) {
+        throw new CliError(`unknown runtime engine: ${name}; run: sandbox runtime list`, 2);
+      }
+      saveHostConfig(deps.homeDir, { runtime: name });
+      deps.stdout(`selected runtime ${name} for new workspaces\n`);
+      return 0;
+    }
+    default:
+      throw new UsageError(`unknown runtime action: ${action}`);
   }
-  return plan.tag;
 }
 
 async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {  const registry = loadRegistryOrThrow(deps);
-  switch (action) {
+  const agents = agentRegistry(deps);  switch (action) {
     case 'help':
       deps.stdout(imageHelp());
       return 0;
     case 'list': {
-      const containers = rt.listManagedContainers(deps.runner);
+      const runtimes = new Set(Object.values(registry.workspaces).map((item) => item.runtime));
+      runtimes.add(loadHostConfig(deps.homeDir).runtime);
+      const containers: string[] = [];
+      for (const name of runtimes) {
+        const engine = RUNTIME_ENGINES[name];
+        if (engine) containers.push(...engine.listManagedContainers(deps.runner));
+      }
       const entries = Object.values(registry.workspaces).map((entry) => ({ id: entry.id, image: entry.image, container: entry.container }));
       if (rest.includes('--json')) {
         deps.stdout(`${JSON.stringify({ images: entries, containers }, null, 2)}\n`);
@@ -948,18 +1026,20 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       return 0;
     }
     case 'build': {
+      const rt = selectRuntime(deps);
       const contextDir = new URL('../../templates', import.meta.url).pathname;
       const tag = `sandbox-workspace:candidate-${Date.now()}`;
       const built = buildCandidate(
         {
-          buildImage: (plan) => dockerBuild(deps.runner, plan),
+          buildImage: (plan) => {
+            try {
+              return rt.buildImage(deps.runner, plan);
+            } catch (error) {
+              throw new CliError((error as Error).message, 1);
+            }
+          },
           inspectBinaryVersions: (candidate) => {
-            const probed = deps.runner.run('docker', [
-              'run', '--rm',
-              '-e', 'SANDBOX_GENERATION=inspect',
-              '-e', 'SANDBOX_CONFIG_FINGERPRINT=inspect',
-              candidate, 'sh', '-c', 'opencode --version; codex --version; copilot --version',
-            ]);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'opencode --version; codex --version; copilot --version']);
             const versions: Record<string, string> = {};
             const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
             if (lines[0]) versions['opencode-ai'] = lines[0];
@@ -994,8 +1074,9 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
     case 'activate': {
       const digest = rest[0];
       if (!digest) throw new UsageError('image activate requires <digest>');
-      if (!rt.imageExists(deps.runner, digest)) throw new CliError(`image not found locally: ${digest}`, 1);
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
+      if (!rt.imageExists(deps.runner, digest)) throw new CliError(`image not found locally: ${digest}`, 1);
       if (entry.instances.length > 0) {
         const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Activate?`);
         if (!approved) throw new CliError('activate cancelled; nothing was changed', 1);

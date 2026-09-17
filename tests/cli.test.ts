@@ -51,6 +51,11 @@ describe('parseArgs', () => {
     }
   });
 
+  it('parses runtime group commands', () => {
+    expect(parseArgs(['runtime', 'list'])).toEqual({ kind: 'runtime', action: 'list', rest: [] });
+    expect(parseArgs(['runtime', 'use', 'apple'])).toEqual({ kind: 'runtime', action: 'use', rest: ['apple'] });
+  });
+
   it('parses shell, doctor and resource groups', () => {
     expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined, noAttach: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });
