@@ -173,6 +173,20 @@ export function referenceImageId(runner: CommandRunner, image: string): string |
   return id ?? null;
 }
 
+/**
+ * Image identity comparison. `docker inspect` reports the full digest
+ * (sha256:...) while `docker images -q` reports the short id; a naive
+ * string comparison mismatches forever and recreates the container on
+ * every invocation, killing all running agent processes.
+ */
+export function sameImageId(left: string | null, right: string | null): boolean {
+  if (!left || !right) return false;
+  const strip = (id: string): string => id.replace(/^sha256:/, '');
+  const a = strip(left);
+  const b = strip(right);
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
 export function readReadyJson(runner: CommandRunner, container: string): { generation: string; fingerprint: string; startedAt: number } | null {
   const probed = runner.run('docker', ['exec', container, 'cat', '/tmp/sandbox-ready/ready.json']);
   if (probed.status !== 0) return null;

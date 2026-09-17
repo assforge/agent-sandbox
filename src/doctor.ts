@@ -26,6 +26,8 @@ export interface WorkspacePosture {
   /** Null when no workspace is in scope: the network check is skipped. */
   network: 'open' | 'restricted' | null;
   networkExists: boolean;
+  /** Roster windows with no live pane. Empty when unscopable. */
+  deadWindows: string[];
 }
 
 export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck[] {
@@ -78,8 +80,7 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
   });
   if (posture.network === null) {
     return checks;
-  }
-  if (!posture.networkExists) {
+  }  if (!posture.networkExists) {
     checks.push({
       id: 'workspace-network',
       group: 'Workspace',
@@ -101,6 +102,15 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
       status: 'warn',
       summary: 'Egress is unrestricted on the workspace network',
       remediation: 'Run: sandbox workspace configure --network restricted',
+    });
+  }
+  if (posture.deadWindows.length > 0) {
+    checks.push({
+      id: 'workspace-windows',
+      group: 'Workspace',
+      status: 'warn',
+      summary: `Dead windows with no live pane: ${posture.deadWindows.join(', ')}`,
+      remediation: 'Run: sandbox workspace reopen',
     });
   }
   return checks;

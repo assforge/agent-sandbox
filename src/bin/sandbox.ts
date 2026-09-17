@@ -42,7 +42,7 @@ import {
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { dockerExec } from '../session.js';
-import { openAgentWindow, reattach, sessionAlive, assertWindowName } from '../terminal.js';
+import { openAgentWindow, paneAlive, reattach, sessionAlive, assertWindowName } from '../terminal.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, credentialsHelp, imageHelp, topHelp, workspaceHelp } from '../help.js';
 
@@ -256,6 +256,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         networkListed !== null &&
         networkListed.status === 0 &&
         networkListed.stdout.split('\n').map((line) => line.trim()).includes(network);
+      const deadWindows = current ? deadRosterWindows(deps, current) : [];
       const checks = runDoctor(
         {
           nodeVersion: deps.nodeVersion,
@@ -263,7 +264,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           commandSucceeds: deps.commandSucceeds,
           platform: deps.platform,
         },
-        { image: current?.image ?? null, network: current ? current.network : null, networkExists },
+        { image: current?.image ?? null, network: current ? current.network : null, networkExists, deadWindows },
       );
       deps.stdout(parsed.json ? renderDoctorJson(checks) : renderDoctorText(checks));
       return doctorExitCode(checks);
@@ -351,6 +352,16 @@ function takeRestOption(rest: string[], names: string[]): string | undefined {
   const value = rest[index + 1];
   if (!value || value.startsWith('-')) throw new UsageError(`option ${rest[index]} requires a value`);
   return value;
+}
+
+/** Roster windows with no live pane. Empty when the session is absent. */
+function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
+  if (!sessionAlive(deps.runner, entry.session)) return [];
+  const dead: string[] = [];
+  for (const instance of entry.instances) {
+    if (!paneAlive(deps.runner, entry.session, instance.window)) dead.push(instance.window);
+  }
+  return dead;
 }
 
 /** Read the workspace id from a backup manifest without touching the registry. */function peekBackupId(outputDir: string): string {
@@ -441,6 +452,10 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const entry = await resolveAndEnsure(deps, registry, workspace);
       if (!sessionAlive(deps.runner, entry.session)) {
         throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
+      }
+      const state = containerState(deps.runner, entry.container, entry.id);
+      if (state !== 'running') {
+        deps.stderr(`warning: container ${entry.container} is ${state}; windows will be dead. Run: sandbox workspace start\n`);
       }
       reattach(deps.runner, entry.session, deps.insideTmux);
       return 0;
@@ -810,6 +825,10 @@ async function credentialsCommand(deps: MainDeps, action: string, rest: string[]
         content = readFileSync(file, 'utf8');
       } catch {
         throw new CliError(`cannot read credential file: ${file}`, 2);
+      }
+      if (loadCredentials(deps.homeDir, entry.id, instance) !== null) {
+        const approved = await deps.confirm(`instance ${instance} already has credentials. Overwrite?`);
+        if (!approved) throw new CliError('credentials set cancelled; nothing was changed', 1);
       }
       let keys: string[];
       try {
