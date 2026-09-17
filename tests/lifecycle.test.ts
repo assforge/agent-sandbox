@@ -488,6 +488,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['register'], cwdDeps)).toBe(0);
       expect(out.join('')).toContain('registered');
       expect(loadRegistry(join(home, '.sandbox', 'registry.json')).workspaces).not.toEqual({});
+      expect(await main(['register', join(home, 'no-such-dir')], cwdDeps)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
