@@ -21,7 +21,7 @@ function deps(overrides: Partial<MainDeps> = {}): MainDeps & { out: string[]; er
     pathLookup: (name) => `/usr/bin/${name}`,
     commandSucceeds: () => true,
     runner: { run: () => ({ status: 0, stdout: '', stderr: '' }) },
-    insideTmux: false,
+    insideTerminal: false,
     stdinIsTTY: true,
     assumeYes: true,
     confirm: async () => true,

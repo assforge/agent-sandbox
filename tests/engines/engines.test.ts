@@ -16,10 +16,11 @@ describe('engine registries', () => {
     expect(agentEngine(agentEngines(), 'codex')).toBeInstanceOf(NpmAgentEngine);
     expect(agentEngine(agentEngines(), 'claude')).toBeInstanceOf(NativeAgentEngine);
     expect(terminalEngine('tmux').name).toBe('tmux');
+    expect(terminalEngine('herder').name).toBe('herder');
     expect(runtimeEngine('docker').name).toBe('docker');
     expect(TERMINAL_ENGINES['tmux']).toBeDefined();
     expect(RUNTIME_ENGINES['docker']).toBeDefined();
-    expect(() => terminalEngine('herder')).toThrow(/unknown terminal engine/);
+    expect(() => terminalEngine('screen')).toThrow(/unknown terminal engine/);
     expect(() => runtimeEngine('podman')).toThrow(/unknown runtime engine/);
   });
 

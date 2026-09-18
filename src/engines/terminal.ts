@@ -20,6 +20,8 @@ import type { CommandRunner } from '../docker.js';
 
 export interface TerminalEngine {
   readonly name: string;
+  readonly cliBinary: string;
+  installHint: (platform: NodeJS.Platform) => string;
   assertWindowName: (name: string) => void;
   sessionAlive: (runner: CommandRunner, session: string) => boolean;
   newSession: (runner: CommandRunner, session: string, window: string, workdir: string, command: ExecSpec) => void;
@@ -28,7 +30,7 @@ export interface TerminalEngine {
   selectWindow: (runner: CommandRunner, session: string, window: string) => void;
   paneAlive: (runner: CommandRunner, session: string, window: string) => boolean;
   respawnWindow: (runner: CommandRunner, session: string, window: string, launch: ExecSpec) => void;
-  reattach: (runner: CommandRunner, session: string, insideTmux: boolean) => void;
+  reattach: (runner: CommandRunner, session: string, insideTerminal: boolean) => void;
   killSession: (runner: CommandRunner, session: string) => void;
   listSessions: (runner: CommandRunner) => string[];
   openAgentWindow: (
@@ -40,8 +42,16 @@ export interface TerminalEngine {
   ) => 'reused' | 'respawned' | 'created';
 }
 
+function hintInstallTmux(platform: NodeJS.Platform): string {
+  if (platform === 'darwin') return 'macOS installation command: brew install tmux';
+  if (platform === 'linux') return 'Debian/Ubuntu installation command: sudo apt-get install tmux';
+  return 'Install tmux with your platform package manager, then run this check again';
+}
+
 export const TmuxTerminalEngine: TerminalEngine = {
   name: 'tmux',
+  cliBinary: 'tmux',
+  installHint: hintInstallTmux,
   assertWindowName,
   sessionAlive,
   newSession,
@@ -62,8 +72,11 @@ export const TmuxTerminalEngine: TerminalEngine = {
 
 export { assertWindowName };
 
+import { HerderTerminalEngine } from './herder.js';
+
 export const TERMINAL_ENGINES: Record<string, TerminalEngine> = {
   tmux: TmuxTerminalEngine,
+  herder: HerderTerminalEngine,
 };
 
 export function terminalEngine(name: string): TerminalEngine {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_RUNTIME, loadHostConfig, saveHostConfig } from '../../src/hostconfig.js';
+import { DEFAULT_RUNTIME, DEFAULT_TERMINAL, loadHostConfig, saveHostConfig } from '../../src/hostconfig.js';
 import { loadUserCatalog } from '../../src/engines/agent.js';
 import { AppleContainerRuntimeEngine } from '../../src/engines/apple.js';
 import type { RunResult } from '../../src/docker.js';
@@ -29,9 +29,9 @@ describe('host config', () => {
   it('defaults to docker and round-trips the selection', () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-hostcfg-'));
     try {
-      expect(loadHostConfig(home)).toEqual({ runtime: DEFAULT_RUNTIME });
-      saveHostConfig(home, { runtime: 'apple' });
-      expect(loadHostConfig(home)).toEqual({ runtime: 'apple' });
+      expect(loadHostConfig(home)).toEqual({ runtime: DEFAULT_RUNTIME, terminal: DEFAULT_TERMINAL });
+      saveHostConfig(home, { runtime: 'apple', terminal: 'herder' });
+      expect(loadHostConfig(home)).toEqual({ runtime: 'apple', terminal: 'herder' });
       writeFileSync(join(home, '.sandbox', 'config.json'), '{broken', 'utf8');
       expect(() => loadHostConfig(home)).toThrow(/cannot read host config/);
     } finally {
@@ -58,8 +58,7 @@ describe('user catalog', () => {
   });
 });
 
-describe('apple engine vectors', () => {
-  it('builds container-shaped argv from verified flags', () => {
+describe('apple engine vectors', () => {  it('builds container-shaped argv from verified flags', () => {
     const { runner, calls } = fakeRunner({});
     const spec = AppleContainerRuntimeEngine.execVector('c1', {
       workdir: '/w',
@@ -108,5 +107,97 @@ describe('apple engine vectors', () => {
       'container network': { status: 0, stdout: '{"name":"n"}', stderr: '' },
     });
     expect(() => AppleContainerRuntimeEngine.networkInternal(nonet.runner, 'n')).toThrow(/unverified output shape/);
+  });
+});
+
+describe('apple engine operations', () => {
+  const labels = (runtime: string): string =>
+    `{"Config":{"Labels":{"sandbox.managed":"true","sandbox.workspace":"w","sandbox.runtime":"${runtime}"}}}`;
+
+  function stateRunner(): { runner: { run: (command: string, args: string[]) => RunResult }; calls: string[][] } {
+    return fakeRunner({
+      'container list': { status: 0, stdout: JSON.stringify([{ id: 'c1', name: 'sandbox-w' }]), stderr: '' },
+      'container inspect': { status: 0, stdout: labels('apple'), stderr: '' },
+      'container exec': { status: 0, stdout: '', stderr: '' },
+    });
+  }
+
+  it('creates volumes, networks, and containers with labels', () => {
+    const { runner, calls } = fakeRunner({
+      'container volume': { status: 0, stdout: '[]', stderr: '' },
+      'container network': { status: 0, stdout: '[]', stderr: '' },
+    });
+    AppleContainerRuntimeEngine.ensureVolume(runner, 'vol-1', 'w');
+    expect(calls.some((call) => call.includes('volume') && call.includes('create'))).toBe(true);
+    AppleContainerRuntimeEngine.ensureNetwork(runner, 'net-1', 'w', true);
+    const create = calls.find((call) => call.includes('network') && call.includes('create')) as string[];
+    expect(create).toContain('--internal');
+    expect(AppleContainerRuntimeEngine.volumeExists(runner, 'vol-1')).toBe(false);
+    expect(AppleContainerRuntimeEngine.networkExists(runner, 'net-1')).toBe(false);
+    expect(AppleContainerRuntimeEngine.listVolumes(runner)).toEqual([]);
+    expect(AppleContainerRuntimeEngine.listContainers(runner)).toEqual([]);
+  });
+
+  it('starts, stops, removes, copies, logs, and builds', () => {
+    const { runner, calls } = fakeRunner({
+      'container image': { status: 0, stdout: JSON.stringify([{ name: 'img:tag', digest: 'sha256:abc123def456' }]), stderr: '' },
+      'container inspect': { status: 0, stdout: '{"image":"img:tag sha256:abc123def456"}', stderr: '' },
+      'container list': { status: 0, stdout: JSON.stringify([{ name: 'sandbox-w', labels: 'sandbox.managed=true' }]), stderr: '' },
+    });
+    const entry = { id: 'w', container: 'sandbox-w', root: '/w' };
+    expect(() => AppleContainerRuntimeEngine.createContainer(runner, entry, {
+      image: 'img:tag', workdir: '/work', mounts: ['/w', '/extra'], homeVolume: 'vol-1',
+      network: 'net-1', runtimeName: 'apple', generation: 'g', fingerprint: 'f',
+    })).not.toThrow();
+    const run = calls.find((call) => call[1] === 'run' && call.includes('--name'));
+    expect(run).toContain('--cap-drop');
+    expect(run).toContain('sandbox.runtime=apple');
+    AppleContainerRuntimeEngine.startContainer(runner, 'sandbox-w');
+    AppleContainerRuntimeEngine.stopContainer(runner, 'sandbox-w');
+    AppleContainerRuntimeEngine.removeContainer(runner, 'sandbox-w');
+    AppleContainerRuntimeEngine.copyVolume(runner, 'a', 'b', 'w');
+    expect(AppleContainerRuntimeEngine.imageExists(runner, 'img:tag')).toBe(true);
+    expect(AppleContainerRuntimeEngine.referenceImageId(runner, 'img:tag')).toBe('sha256:abc123def456');
+    expect(AppleContainerRuntimeEngine.containerImageId(runner, 'sandbox-w')).toBe('sha256:abc123def456');
+    AppleContainerRuntimeEngine.buildImage(runner, { contextDir: '/ctx', tag: 't', buildArgs: { A: 'b' } });
+    AppleContainerRuntimeEngine.runOneShot(runner, 'img:tag', { K: 'v' }, ['sh']);
+    AppleContainerRuntimeEngine.copyFromContainer(runner, 'c', '/p', '/h');
+    AppleContainerRuntimeEngine.copyToContainer(runner, 'c', '/h', '/p');
+    AppleContainerRuntimeEngine.containerLogs(runner, 'c', '10');
+    expect(AppleContainerRuntimeEngine.listManagedContainers(runner)).toEqual(['sandbox-w']);
+  });
+
+  it('fails every mutating op closed with the engine name in the message', () => {
+    const { runner } = fakeRunner({
+      'container volume': { status: 1, stdout: '', stderr: 'nope' },
+      'container network': { status: 1, stdout: '', stderr: 'nope' },
+      'container start': { status: 1, stdout: '', stderr: 'nope' },
+      'container stop': { status: 1, stdout: '', stderr: 'nope' },
+      'container delete': { status: 1, stdout: '', stderr: 'nope' },
+      'container run': { status: 1, stdout: '', stderr: 'nope' },
+      'container build': { status: 1, stdout: '', stderr: 'nope' },
+      'container copy': { status: 1, stdout: '', stderr: 'nope' },
+    });
+    expect(() => AppleContainerRuntimeEngine.ensureVolume(runner, 'v', 'w')).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.ensureNetwork(runner, 'n', 'w', false)).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.startContainer(runner, 'c')).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.stopContainer(runner, 'c')).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.removeContainer(runner, 'c')).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.copyVolume(runner, 'a', 'b', 'w')).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.buildImage(runner, { contextDir: '/c', tag: 't', buildArgs: {} })).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.copyFromContainer(runner, 'c', '/p', '/h')).toThrow(/apple runtime/);
+    expect(() => AppleContainerRuntimeEngine.copyToContainer(runner, 'c', '/h', '/p')).toThrow(/apple runtime/);
+  });
+
+  it('reads readiness and exec vectors like docker', () => {
+    const { runner } = stateRunner();
+    expect(AppleContainerRuntimeEngine.readReadyJson(runner, 'sandbox-w')).toBeNull();
+    const ready = fakeRunner({
+      'container exec': { status: 0, stdout: '{"generation":"g","fingerprint":"f","started_at":7}', stderr: '' },
+    });
+    expect(AppleContainerRuntimeEngine.readReadyJson(ready.runner, 'c')).toEqual({ generation: 'g', fingerprint: 'f', startedAt: 7 });
+    const spec = AppleContainerRuntimeEngine.execVector('c', { workdir: '/w', argv: ['ls'] });
+    expect(spec.command).toBe('container');
+    expect(spec.args).toContain('-t');
   });
 });

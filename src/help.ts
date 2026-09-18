@@ -73,6 +73,8 @@ Commands:
   sandbox credentials clear --instance <name>
   sandbox runtime list [--json]
   sandbox runtime use <name>
+  sandbox terminal list [--json]
+  sandbox terminal use <name>
   sandbox agent list [--json]
   sandbox agent outdated [--json]
   sandbox agent upgrade <agent|all>
@@ -171,6 +173,19 @@ verification status. use <name> selects the host default for new
 workspaces; existing workspaces keep their recorded runtime until
 sandbox workspace configure --runtime changes them. A workspace created
 by another runtime fails closed instead of being adopted.
+
+${SHARED_HELP}
+`;
+}
+
+export function terminalHelp(): string {
+  return `Usage: sandbox terminal <action>
+
+Actions: list, use.
+
+list shows every known terminal engine. use <name> selects the host
+default for new workspaces; existing workspaces keep their recorded
+terminal until sandbox workspace configure --terminal changes them.
 
 ${SHARED_HELP}
 `;

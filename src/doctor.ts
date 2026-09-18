@@ -15,6 +15,8 @@ export interface ProbeEnv {
   platform: NodeJS.Platform;
   /** Container runtime under test. Defaults to Docker when omitted. */
   runtime?: { display: string; binary: string; args: string[]; verified: boolean };
+  /** Terminal engine under test. Defaults to tmux when omitted. */
+  terminal?: { display: string; binary: string; installHint: string };
 }
 
 function hintInstallTmux(platform: NodeJS.Platform): string {
@@ -75,13 +77,14 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
     });
   }
 
-  const tmuxBin = env.pathLookup('tmux');
+  const terminal = env.terminal ?? { display: 'tmux', binary: 'tmux', installHint: hintInstallTmux(env.platform) };
+  const tmuxBin = env.pathLookup(terminal.binary);
   checks.push({
-    id: 'tmux',
+    id: 'terminal',
     group: 'Terminal',
     status: tmuxBin ? 'ok' : 'fail',
-    summary: tmuxBin ? `tmux found at ${tmuxBin}` : 'tmux was not found on PATH',
-    remediation: tmuxBin ? undefined : hintInstallTmux(env.platform),
+    summary: tmuxBin ? `${terminal.display} found at ${tmuxBin}` : `${terminal.display} was not found on PATH`,
+    remediation: tmuxBin ? undefined : terminal.installHint,
   });
 
   checks.push({

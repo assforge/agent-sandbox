@@ -24,6 +24,8 @@ export interface WorkspaceEntry {
   network: NetworkPolicy;
   /** Container runtime engine that owns this workspace. Foreign runtimes fail closed. */
   runtime: string;
+  /** Terminal engine that owns this workspace's windows. */
+  terminal: string;
   mounts: string[];
 }
 
@@ -93,6 +95,7 @@ export function loadRegistry(registryPath: string): Registry {
     if (entry.network !== 'open' && entry.network !== 'restricted') entry.network = 'open';
     if (entry.previousImage === undefined) entry.previousImage = null;
     if (typeof entry.runtime !== 'string' || entry.runtime.length === 0) entry.runtime = 'docker';
+    if (typeof entry.terminal !== 'string' || entry.terminal.length === 0) entry.terminal = 'tmux';
   }
   return { version: REGISTRY_VERSION, workspaces };
 }
@@ -124,6 +127,8 @@ export function lookupWorkspace(registry: Registry, canonicalRoot: string): Work
 export interface RegisterOptions {
   homeDir?: string;
   canonicalize?: (path: string) => string;
+  runtime?: string;
+  terminal?: string;
 }
 
 export function registerWorkspace(
@@ -150,7 +155,8 @@ export function registerWorkspace(
     instances: [],
     homeVolume: `sandbox-home-${id}`,
     network: 'open',
-    runtime: 'docker',
+    runtime: options.runtime ?? 'docker',
+    terminal: options.terminal ?? 'tmux',
     mounts: [...mounts],
   };
   registry.workspaces[id] = entry;

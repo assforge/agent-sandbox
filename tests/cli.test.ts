@@ -54,6 +54,8 @@ describe('parseArgs', () => {
   it('parses runtime group commands', () => {
     expect(parseArgs(['runtime', 'list'])).toEqual({ kind: 'runtime', action: 'list', rest: [] });
     expect(parseArgs(['runtime', 'use', 'apple'])).toEqual({ kind: 'runtime', action: 'use', rest: ['apple'] });
+    expect(parseArgs(['terminal', 'list'])).toEqual({ kind: 'terminal', action: 'list', rest: [] });
+    expect(parseArgs(['terminal', 'use', 'herder'])).toEqual({ kind: 'terminal', action: 'use', rest: ['herder'] });
   });
 
   it('parses shell, doctor and resource groups', () => {

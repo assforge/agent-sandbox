@@ -40,6 +40,7 @@ export function redactedConfig(entry: WorkspaceEntry): Record<string, unknown> {
     homeVolume: entry.homeVolume,
     network: entry.network,
     runtime: entry.runtime,
+    terminal: entry.terminal,
     mounts: entry.mounts,
     instances: entry.instances.map((instance) => ({ name: instance.name, kind: instance.kind, window: instance.window })),
   };

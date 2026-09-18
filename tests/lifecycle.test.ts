@@ -285,7 +285,7 @@ function setup() {
     pathLookup: (name) => `/usr/bin/${name}`,
     commandSucceeds: () => true,
     runner: world,
-    insideTmux: false,
+    insideTerminal: false,
     stdinIsTTY: true,
     assumeYes: true,
     confirm: async () => true,
@@ -517,16 +517,22 @@ describe('workspace lifecycle flows', () => {
   });
 
   it('selects runtimes and records per-workspace overrides', async () => {
-    const { home, root, deps, out, err } = setup();
+    const { home, root, world, deps, out, err } = setup();
     try {
       expect(await main(['runtime', 'list'], deps)).toBe(0);
       expect(out.join('')).toContain('docker (selected)');
       expect(out.join('')).toContain('apple');
       expect(await main(['runtime', 'use', 'apple'], deps)).toBe(0);
       expect(await main(['runtime', 'use', 'nope'], deps)).toBe(2);
+      expect(await main(['terminal', 'list'], deps)).toBe(0);
+      expect(out.join('')).toContain('tmux (selected)');
+      expect(out.join('')).toContain('herder');
+      expect(await main(['terminal', 'use', 'herder'], deps)).toBe(0);
+      expect(await main(['terminal', 'use', 'nope'], deps)).toBe(2);
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
-      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'apple'], deps)).toBe(0);
-      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'nope'], deps)).toBe(2);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--terminal', 'herder'], deps)).toBe(0);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--terminal', 'nope'], deps)).toBe(2);
+      void world;
       void err;
     } finally {
       rmSync(home, { recursive: true, force: true });

@@ -71,8 +71,8 @@ export function killSession(runner: CommandRunner, session: string): void {
 }
 
 /** Reconnect: switch the client inside tmux (SSH included), attach otherwise. */
-export function reattach(runner: CommandRunner, session: string, insideTmux: boolean): void {
-  const spec = tmuxReattach(session, insideTmux);
+export function reattach(runner: CommandRunner, session: string, insideTerminal: boolean): void {
+  const spec = tmuxReattach(session, insideTerminal);
   const result = runner.run('tmux', spec.args);
   if (result.status !== 0) {
     throw new Error(`cannot attach to tmux session ${session}: ${result.stderr.trim()}`);

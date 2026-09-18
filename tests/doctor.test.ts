@@ -23,7 +23,7 @@ describe('runDoctor', () => {
     expect(deadDaemon.find((check) => check.id === 'container-runtime')?.status).toBe('fail');
     expect(deadDaemon.find((check) => check.id === 'container-runtime')?.summary).toMatch(/daemon is unavailable/);
     const noTmux = runDoctor({ ...healthy, pathLookup: (name) => (name === 'tmux' ? null : `/usr/bin/${name}`) }, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
-    expect(noTmux.find((check) => check.id === 'tmux')?.remediation).toMatch(/brew install tmux/);
+    expect(noTmux.find((check) => check.id === 'terminal')?.remediation).toMatch(/brew install tmux/);
     const noImage = runDoctor(healthy, { image: null, network: null, networkExists: false, deadWindows: [] });
     expect(noImage.find((check) => check.id === 'workspace-image')?.status).toBe('warn');
     expect(doctorExitCode(noDocker)).toBe(1);
@@ -39,9 +39,9 @@ describe('runDoctor', () => {
 
   it('gives platform-specific tmux remediation and maps warnings to exit 0', () => {
     const linux = runDoctor({ ...healthy, platform: 'linux', pathLookup: () => null }, { image: null, network: null, networkExists: false, deadWindows: [] });
-    expect(linux.find((check) => check.id === 'tmux')?.remediation).toMatch(/apt-get install tmux/);
+    expect(linux.find((check) => check.id === 'terminal')?.remediation).toMatch(/apt-get install tmux/);
     const unknown = runDoctor({ ...healthy, platform: 'win32', pathLookup: () => null }, { image: null, network: null, networkExists: false, deadWindows: [] });
-    expect(unknown.find((check) => check.id === 'tmux')?.remediation).toMatch(/package manager/);
+    expect(unknown.find((check) => check.id === 'terminal')?.remediation).toMatch(/package manager/);
     const warnOnly = runDoctor(healthy, { image: null, network: null, networkExists: false, deadWindows: [] });
     expect(warnOnly.every((check) => check.status !== 'fail')).toBe(true);
     expect(doctorExitCode(warnOnly)).toBe(0);
