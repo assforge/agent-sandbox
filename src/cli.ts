@@ -1,9 +1,11 @@
+import { HOME_MODES, type HomeMode } from './registry.js';
+
 export type ParsedCommand =
   | { kind: 'help'; topic?: string }
   | { kind: 'version' }
   | { kind: 'bare'; workspace?: string; noAttach?: boolean }
-  | { kind: 'agent'; agent: string; name?: string; workspace?: string; forwarded: string[]; noAttach?: boolean }
-  | { kind: 'shell'; name?: string; workspace?: string; noAttach?: boolean }
+  | { kind: 'agent'; agent: string; name?: string; workspace?: string; forwarded: string[]; noAttach?: boolean; homeMode?: HomeMode }
+  | { kind: 'shell'; name?: string; workspace?: string; noAttach?: boolean; homeMode?: HomeMode }
   | { kind: 'doctor'; json: boolean; workspace?: string }
   | { kind: 'workspace'; action: string; rest: string[]; workspace?: string; help: boolean }
   | { kind: 'link'; root?: string; workspace?: string; help: boolean }
@@ -16,7 +18,6 @@ export type ParsedCommand =
   | { kind: 'update'; check: boolean; help: boolean };
 
 export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as const;
-
 /** Long-standing action aliases resolve to their canonical short form. */
 export function canonicalAction(group: string, action: string): string {
   if (group === 'workspace' && action === 'register') return 'link';
@@ -49,6 +50,14 @@ export function splitForwarded(argv: string[]): { head: string[]; forwarded: str
   const index = argv.indexOf('--');
   if (index < 0) return { head: [...argv], forwarded: [] };
   return { head: argv.slice(0, index), forwarded: argv.slice(index + 1) };
+}
+
+function takeHomeMode(args: string[]): HomeMode | undefined {
+  const value = takeOption(args, ['--home']);
+  if (value === undefined) return undefined;
+  const mode = (HOME_MODES as readonly string[]).find((item) => item === value);
+  if (!mode) throw new UsageError(`--home must be one of: ${HOME_MODES.join(', ')}`);
+  return mode as HomeMode;
 }
 
 export function parseArgs(argv: string[]): ParsedCommand {
@@ -91,11 +100,12 @@ export function parseArgs(argv: string[]): ParsedCommand {
   }
   if (takeFlag(args, ['--help', '-h'])) return { kind: 'help' };
   if (first === 'shell') {
-    if (rest.length > 2) throw new UsageError('sandbox shell takes at most --name <name>');
+    if (rest.length > 4) throw new UsageError('sandbox shell takes at most --name <name> --home <mode>');
     const name = takeOption(rest, ['--name', '-n']);
+    const homeMode = takeHomeMode(rest);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
     if (forwarded.length > 0) throw new UsageError('sandbox shell does not forward arguments');
-    return { kind: 'shell', name, workspace, noAttach };
+    return { kind: 'shell', name, workspace, noAttach, homeMode };
   }
   if (first === 'doctor') {
     const json = takeFlag(rest, ['--json', '-j']) || forwarded.includes('--json');
@@ -103,10 +113,11 @@ export function parseArgs(argv: string[]): ParsedCommand {
     return { kind: 'doctor', json, workspace };
   }
   if ((SUPPORTED_AGENTS as readonly string[]).includes(first)) {
-    if (rest.length > 2) throw new UsageError(`unexpected argument: ${rest[0]} (use --name for instances, -- for agent arguments)`);
+    if (rest.length > 4) throw new UsageError(`unexpected argument: ${rest[0]} (use --name for instances, --home for home mode, -- for agent arguments)`);
     const name = takeOption(rest, ['--name', '-n']);
+    const homeMode = takeHomeMode(rest);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]} (use -- to forward agent arguments)`);
-    return { kind: 'agent', agent: first, name, workspace, forwarded, noAttach };
+    return { kind: 'agent', agent: first, name, workspace, forwarded, noAttach, homeMode };
   }
   throw new UsageError(`unknown command: ${first}`);
 }

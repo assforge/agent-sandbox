@@ -7,17 +7,53 @@ import type { WorkspaceEntry } from './registry.js';
 
 export const INSTANCE_HOME_BASE = '/home/agent/instances';
 
+/** Workspace home shared by instances in shared mode. */
+export const SHARED_HOME = '/home/agent';
+
+/** Agent state directories forked on first launch (caches excluded). */
+export const FORK_STATE_DIRS = ['.claude', '.codex', '.copilot', '.config'];
+
 /** Per-instance HOME directory inside the container. */
 export function instanceHome(instance: string): string {
   return `${INSTANCE_HOME_BASE}/${instance}`;
 }
 
-/** Create the instance HOME before launch so agents land in owned state. */
-export function ensureInstanceHome(runner: CommandRunner, runtime: RuntimeEngine, container: string, instance: string): void {
-  const spec = runtime.execVector(container, { workdir: '/home/agent', argv: ['mkdir', '-p', instanceHome(instance)], user: 'agent', tty: false });
-  const created = runner.run(spec.command, spec.args);
-  if (created.status !== 0) {
-    throw new Error(`cannot prepare instance home for ${instance}: ${created.stderr.trim()}`);
+/** HOME for an instance under its mode. Absent mode means shared. */
+export function homeDirForInstance(instance: string, homeMode?: string): string {
+  if (homeMode !== undefined && homeMode !== 'shared') return instanceHome(instance);
+  return SHARED_HOME;
+}
+
+/**
+ * Create the instance HOME before launch so agents land in owned state.
+ * In fork mode the agent state directories are cloned once from the
+ * shared home when the instance has none yet; shared mode needs nothing.
+ */
+export function ensureInstanceHome(
+  runner: CommandRunner,
+  runtime: RuntimeEngine,
+  container: string,
+  instance: string,
+  homeMode?: string,
+): void {
+  if (homeMode === undefined || homeMode === 'shared') return;
+  const home = instanceHome(instance);
+  const mkdir = runtime.execVector(container, { workdir: SHARED_HOME, argv: ['mkdir', '-p', home], user: 'agent', tty: false });
+  const made = runner.run(mkdir.command, mkdir.args);
+  if (made.status !== 0) {
+    throw new Error(`cannot prepare instance home for ${instance}: ${made.stderr.trim()}`);
+  }
+  if (homeMode === 'fork') {
+    const seed = runtime.execVector(container, {
+      workdir: SHARED_HOME,
+        argv: ['sh', '-c', FORK_STATE_DIRS.map((dir) => `[ -e "${home}/${dir}" ] || { mkdir -p "${home}/${dir}" && cp -a "${SHARED_HOME}/${dir}/." "${home}/${dir}/" 2>/dev/null || true; }`).join('; ')],
+      user: 'agent',
+      tty: false,
+    });
+    const seeded = runner.run(seed.command, seed.args);
+    if (seeded.status !== 0) {
+      throw new Error(`cannot seed instance home for ${instance}: ${seeded.stderr.trim()}`);
+    }
   }
 }
 

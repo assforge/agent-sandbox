@@ -276,6 +276,12 @@ class FakeWorld {
     if (args[0] === 'list-sessions') {
       return { status: 0, stdout: [...this.sessions.keys()].join('\n'), stderr: '' };
     }
+    if (args[0] === 'kill-window') {
+      const target = args[args.indexOf('-t') + 1] as string;
+      const [session, window] = target.split(':');
+      this.sessions.get(session as string)?.delete(window as string);
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (args[0] === 'select-window' || args[0] === 'attach-session' || args[0] === 'switch-client') {
       return { status: 0, stdout: '', stderr: '' };
     }
@@ -350,7 +356,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['claude', '--name', 'rollout', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('created window rollout (claude)');
       expect(await main(['workspace', 'status', '--workspace', root], deps)).toBe(0);
-      expect(out.join('')).toContain('rollout(claude)');
+      expect(out.join('')).toContain('rollout(claude:shared)');
       expect(await main(['workspace', 'stop', '--workspace', root], deps)).toBe(0);
       expect(world.containers.get(`sandbox-${id}`)?.running).toBe(false);
       world.images.add('sandbox-workspace:next');
@@ -602,7 +608,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'reopen', '--workspace', root, '--no-attach'], deps)).toBe(0);
       expect(out.join('')).toContain('reused window codex');
       expect(await main(['workspace', 'status', '--workspace', root], deps)).toBe(0);
-      expect(out.join('')).toContain('codex(codex)');
+      expect(out.join('')).toContain('codex(codex:shared)');
       world.failBuild = true;
       expect(await main(['image', 'build'], deps)).toBe(1);
       expect(out.join('')).not.toContain('verified');
@@ -688,6 +694,46 @@ describe('workspace lifecycle flows', () => {
       }
       const outside = { ...counting, cwd: home };
       expect(await main(['workspace', 'prune'], outside)).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('runs instances in shared, fork, and fresh homes with close and fork prune', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--name', 'w1', '--home', 'fork', '--no-attach'], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--name', 'w2', '--home', 'fresh', '--no-attach'], deps)).toBe(0);
+      const launches = world.calls.filter((call) => call[0] === 'tmux' && call.includes('docker'));
+      const homeOf = (window: string): string => {
+        const found = launches.find((call) => call[call.indexOf('-n') + 1] === window) ?? [];
+        const env = (found as string[]).find((arg) => arg.startsWith('HOME='));
+        return env ?? '';
+      };
+      expect(homeOf('codex')).toBe('HOME=/home/agent');
+      expect(homeOf('w1')).toBe('HOME=/home/agent/instances/w1');
+      expect(homeOf('w2')).toBe('HOME=/home/agent/instances/w2');
+      const seeds = world.calls.filter((call) => call.some((arg) => typeof arg === 'string' && arg.includes('cp -a')));
+      expect(seeds.length).toBe(1);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      expect(registry.workspaces[id]?.forks).toEqual(['w1']);
+      expect(await main(['workspace', 'status', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('codex(codex:shared)');
+      expect(await main(['workspace', 'close', 'nope', '--workspace', root], deps)).toBe(1);
+      expect(await main(['workspace', 'close', 'w1', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('closed instance w1');
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((i) => i.name)).not.toContain('w1');
+      expect(world.sessions.get(`sandbox-${id}`)?.has('w1')).toBe(false);
+      expect(await main(['workspace', 'prune', '--forks', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('pruned forks');
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.forks).toEqual([]);
+      expect(await main(['workspace', 'prune', '--forks', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('no orphan fork state');
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
@@ -788,8 +834,8 @@ describe('workspace lifecycle flows', () => {
       expect(out.join('')).toContain('"RELAY_URL": "***"');
       expect(out.join('')).not.toContain('key-one');
       expect(await main(['credentials', 'list', '--workspace', root], deps)).toBe(0);
-      expect(await main(['shell', '--workspace', root, '--name', 'w1', '--no-attach'], deps)).toBe(0);
-      expect(await main(['shell', '--workspace', root, '--name', 'w2', '--no-attach'], deps)).toBe(0);
+      expect(await main(['shell', '--workspace', root, '--name', 'w1', '--home', 'fresh', '--no-attach'], deps)).toBe(0);
+      expect(await main(['shell', '--workspace', root, '--name', 'w2', '--home', 'fresh', '--no-attach'], deps)).toBe(0);
       const launches = world.calls.filter(
         (call) => call[0] === 'tmux' && call.includes('docker'),
       );

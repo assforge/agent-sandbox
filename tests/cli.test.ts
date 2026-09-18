@@ -86,6 +86,21 @@ describe('parseArgs', () => {
     expect(parseArgs(['doctor', '-j'])).toMatchObject({ kind: 'doctor', json: true });
   });
 
+  it('parses per-instance home modes', () => {
+    expect(parseArgs(['claude', '--home', 'fork'])).toMatchObject({ kind: 'agent', homeMode: 'fork' });
+    expect(parseArgs(['claude', '--name', 'w1', '--home', 'shared'])).toMatchObject({ kind: 'agent', name: 'w1', homeMode: 'shared' });
+    expect(parseArgs(['shell', '--home', 'fresh'])).toMatchObject({ kind: 'shell', homeMode: 'fresh' });
+    expect(parseArgs(['claude'])).toMatchObject({ kind: 'agent', homeMode: undefined });
+    for (const argv of [['claude', '--home', 'mansion'], ['shell', '--home', 'fork', 'extra']]) {
+      try {
+        parseArgs(argv);
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(UsageError);
+      }
+    }
+  });
+
   it('parses shell, doctor and resource groups', () => {
     expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined, noAttach: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });

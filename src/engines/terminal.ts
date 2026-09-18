@@ -4,6 +4,7 @@
  */
 import {
   assertWindowName,
+  closeWindow,
   killSession,
   newSession,
   newWindow,
@@ -32,6 +33,7 @@ export interface TerminalEngine {
   respawnWindow: (runner: CommandRunner, session: string, window: string, launch: ExecSpec) => void;
   reattach: (runner: CommandRunner, session: string, insideTerminal: boolean) => void;
   killSession: (runner: CommandRunner, session: string) => void;
+  closeWindow: (runner: CommandRunner, session: string, window: string) => void;
   listSessions: (runner: CommandRunner) => string[];
   openAgentWindow: (
     runner: CommandRunner,
@@ -62,6 +64,7 @@ export const TmuxTerminalEngine: TerminalEngine = {
   respawnWindow,
   reattach: reattachSpec,
   killSession,
+  closeWindow,
   listSessions: (runner) => {
     const listed = runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
     if (listed.status !== 0) return [];

@@ -71,6 +71,15 @@ export function killSession(runner: CommandRunner, session: string): void {
   }
 }
 
+/** Close one window; missing windows are already closed. */
+export function closeWindow(runner: CommandRunner, session: string, window: string): void {
+  if (!windowExists(runner, session, window)) return;
+  const closed = runner.run('tmux', ['kill-window', '-t', `${session}:${window}`]);
+  if (closed.status !== 0) {
+    throw new Error(`cannot close tmux window ${session}:${window}: ${closed.stderr.trim()}`);
+  }
+}
+
 /** Reconnect: switch the client inside tmux (SSH included), attach otherwise. */
 export function reattach(runner: CommandRunner, session: string, insideTerminal: boolean): void {
   const spec = tmuxReattach(session, insideTerminal);
