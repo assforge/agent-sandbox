@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor, type ProbeEnv } from '../src/doctor.js';
+import { doctorExitCode, driftChecks, renderDoctorJson, renderDoctorText, runDoctor, type ProbeEnv } from '../src/doctor.js';
 
 const healthy: ProbeEnv = {
   nodeVersion: 'v22.1.0',
@@ -50,6 +50,20 @@ describe('runDoctor', () => {
     const dead = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: ['rollout'] });
     expect(dead.find((check) => check.id === 'workspace-windows')?.status).toBe('warn');
     expect(dead.find((check) => check.id === 'workspace-windows')?.remediation).toMatch(/reopen/);
+  });
+
+  it('warns when running agents drift from pinned versions and ignores the rest', () => {
+    expect(driftChecks({})).toEqual([]);
+    expect(driftChecks({ claude: '2.1.276', 'opencode-ai': '1.18.31', '@openai/codex': '0.154.0', '@github/copilot': '1.0.85' })).toEqual([]);
+    const drifted = driftChecks({ claude: '2.1.276', '@openai/codex': '9.9.9', 'some-future-agent': '1.0.0' });
+    expect(drifted).toHaveLength(1);
+    expect(drifted[0]).toMatchObject({ id: 'agent-drift-codex', status: 'warn', remediation: 'Run: sandbox workspace upgrade' });
+    expect(drifted[0]?.summary).toMatch(/codex runs 9\.9\.9/);
+    const wired = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [], runningVersions: { claude: '9.9.9' } });
+    expect(wired.find((check) => check.id === 'agent-drift-claude')?.status).toBe('warn');
+    expect(doctorExitCode(wired)).toBe(0);
+    const clean = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
+    expect(clean.some((check) => check.id.startsWith('agent-drift'))).toBe(false);
   });
 
   it('probes the selected runtime and flags experimental engines', () => {

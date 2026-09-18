@@ -20,98 +20,33 @@ function agentNames(): string {
 }
 
 export function topHelp(): string {
-  return `Usage: sandbox [-w <path>] [--yes] [command]
+  return `Usage: sandbox [OPTIONS] COMMAND
 
-Resolve the current workspace and start or reconnect its environment.
-The first window is a shell. This command never starts an agent fleet.
+A sandboxed multi-agent workbench: one workspace owns one container
+and one host tmux session; each agent instance owns a window.
 
-Global options:
-  --workspace, -w <path>   Operate on another registered workspace root.
-  --yes, -y                Answer yes to confirmation prompts. Scripts only;
+Options:
+  -w, --workspace <path>   Operate on another workspace. Defaults to the
+                           workspace containing the current directory.
+  -y, --yes                Answer yes to confirmation prompts. Scripts only;
                            never combined with unreviewed destructive runs.
-  --no-attach              Open or select the window without attaching.
-                           The session keeps running for later attach.
+      --no-attach          Open or select the window without attaching.
   -h, --help               Show help. --version, -V show the version.
 
-Daily use:
-  sandbox [agent] [--name, -n <name>] [--no-attach] [-- <agent arguments...>]
-    Open a named agent window in this workspace. The default instance
-    name equals the agent name. Supported agents: ${agentNames()}.
-    Arguments after -- are forwarded without reparsing. Each instance
-    gets its own credentials and HOME directory; see
-    sandbox credentials help.
-  sandbox shell [--name, -n <name>] [--no-attach]
-    Open a shell window in the workspace container.
-  sandbox register [path]
-    Register a workspace root. Defaults to the current directory.
-    Short for sandbox workspace register --root <path>.
-  sandbox unregister [path]
-    Forget a workspace root after confirmation when anything is live.
-    Volumes, networks, images, and credentials are always kept.
-    Short for sandbox workspace unregister.
-  sandbox doctor [--json, -j]
-    Read-only diagnostics with remediation commands.
-  sandbox workspace attach
-    Reconnect only; fails when the session is absent, warns when the
-    container is stopped.
+Commands:
+  agent        Open agent windows (claude, opencode, codex, copilot)
+  shell        Open a shell window in this workspace
+  add          Register a workspace root (short for workspace register)
+  rm           Forget a workspace root, keep all data
+  workspace    Manage workspace environments
+  image        Build, activate, and roll back workspace images
+  credentials  Manage per-instance secrets on the host
+  runtime      Select the container backend (docker, apple)
+  terminal     Select the terminal backend (tmux, herder)
+  doctor       Read-only diagnostics with remediation commands
+  update       Upgrade this CLI in place
 
-Workspace lifecycle:
-  sandbox workspace list [--json, -j]
-  sandbox workspace status [--json, -j]
-  sandbox workspace register --root, -r <path>
-  sandbox workspace start
-    Prepare the environment without attaching.
-  sandbox workspace stop
-    Ask for confirmation when instances are live. Keeps volumes.
-  sandbox workspace reopen [--no-attach]
-    Recreate every registered window after a reboot. The roster in the
-    registry is the source of truth; agent conversations resume with
-    each CLI's own resume flags.
-  sandbox workspace logs [--tail, -t <n>]
-    Show container output for debugging failed startups.
-  sandbox workspace exec -- <command> [arguments...]
-    Run a command in the ready container without adding a window.
-    Starts a stopped container first and propagates the exit status.
-  sandbox workspace configure [--add-mount <p> | --drop-mount <p> | --network open|restricted]
-    Show redacted configuration, or change it with explicit approval.
-  sandbox workspace backup --output, -o <path>
-  sandbox workspace restore --input <path>
-    Restore refuses backups recorded for another workspace.
-  sandbox workspace migrate --source claude-relay [--apply]
-    Dry-run by default; originals are always retained.
-
-Instances and credentials:
-  sandbox credentials list [--json, -j]
-  sandbox credentials show --instance, -i <name>
-    Key names only; values are never printed.
-  sandbox credentials set --instance, -i <name> --file, -f <path>
-    Store KEY=VALUE lines host-side with owner-only permissions.
-    Secrets are never accepted as command-line arguments.
-  sandbox credentials clear --instance, -i <name>
-
-Agents and images:
-  sandbox agent list [--json, -j]
-  sandbox agent outdated [--json, -j]
-  sandbox agent upgrade <agent|all>
-    Builds a verified candidate only; activate explicitly afterwards.
-    Running sessions are never restarted implicitly.
-    claude tracks the vendor release feed; the rest track npm.
-  sandbox image list [--json, -j]
-  sandbox image build
-  sandbox image activate <digest>
-    Ask for confirmation when instances are live; recreates the
-    container on the new image at the next start.
-  sandbox image rollback <digest>
-    Ask for confirmation when instances are live. Does not reverse
-    a data migration.
-
-Pluggable engines:
-  sandbox runtime list [--json, -j]
-  sandbox runtime use <name>
-  sandbox terminal list [--json, -j]
-  sandbox terminal use <name>
-  sandbox --help
-  sandbox --version
+Run 'sandbox COMMAND --help' for more information on a command.
 
 ${SHARED_HELP}
 `;
@@ -218,4 +153,83 @@ terminal until sandbox workspace configure --terminal changes them.
 
 ${SHARED_HELP}
 `;
+}
+
+export function addHelp(): string {
+  return `Usage: sandbox add [path]
+
+Register a workspace root. Defaults to the current directory.
+Long form: sandbox workspace register --root <path>.
+`;
+}
+
+export function removeHelp(): string {
+  return `Usage: sandbox rm [path]
+
+Forget a workspace root after confirmation when anything is live.
+Volumes, networks, images, and credentials are always kept.
+Long form: sandbox workspace unregister.
+`;
+}
+
+export function updateHelp(): string {
+  return `Usage: sandbox update [--check]
+
+Upgrade this CLI in place from the package registry. --check reports
+current and latest versions without changing anything. Uses your own
+npm authentication; running workspaces are untouched.
+`;
+}
+
+const ACTION_HELP: Record<string, Record<string, string>> = {
+  workspace: {
+    list: 'Usage: sandbox workspace list [--json, -j]\n\nList registered workspaces.\n',
+    status: 'Usage: sandbox workspace status [--json, -j]\n\nShow container, session, and instance state.\n',
+    register: 'Usage: sandbox workspace register --root, -r <path>\n\nRegister a workspace root. Short form: sandbox add [path].\n',
+    unregister: 'Usage: sandbox workspace unregister\n\nForget the workspace after confirmation when anything is live. Volumes, networks, images, and credentials are always kept. Short form: sandbox rm [path].\n',
+    start: 'Usage: sandbox workspace start\n\nPrepare the environment without attaching.\n',
+    stop: 'Usage: sandbox workspace stop\n\nAsk for confirmation when instances are live. Keeps volumes.\n',
+    restart: 'Usage: sandbox workspace restart\n\nStop and bring the same image back. Asks for confirmation when instances are live.\n',
+    upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything is current, and otherwise build, activate, and recreate in one confirmed step.\n',
+    attach: 'Usage: sandbox workspace attach\n\nReconnect only; fails when the session is absent, warns when the container is stopped.\n',
+    reopen: 'Usage: sandbox workspace reopen [--no-attach]\n\nRecreate every registered window after a reboot. The roster in the registry is the source of truth.\n',
+    logs: 'Usage: sandbox workspace logs [--tail, -t <n>]\n\nShow container output for debugging failed startups.\n',
+    exec: 'Usage: sandbox workspace exec -- <command> [arguments...]\n\nRun a command in the ready container without adding a window. Starts a stopped container first and propagates the exit status.\n',
+    configure: 'Usage: sandbox workspace configure [--add-mount <p> | --drop-mount <p> | --network open|restricted | --runtime <name> | --terminal <name>]\n\nShow redacted configuration, or change it with explicit approval.\n',
+    mount: 'Usage: sandbox workspace mount <path>\n\nShort for configure --add-mount. Applies on next start.\n',
+    unmount: 'Usage: sandbox workspace unmount <path>\n\nShort for configure --drop-mount. Applies on next start. Cannot drop the workspace root.\n',
+    backup: 'Usage: sandbox workspace backup --output, -o <path>\n\nCopy workspace state host-side for recovery.\n',
+    restore: 'Usage: sandbox workspace restore --input <path>\n\nRestore refuses backups recorded for another workspace.\n',
+    migrate: 'Usage: sandbox workspace migrate --source claude-relay [--apply]\n\nDry-run by default; originals are always retained.\n',
+  },
+  agent: {
+    list: 'Usage: sandbox agent list [--json, -j]\n\nList supported agents with their install channel and pinned version.\n',
+    outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, pinned, and latest versions. claude tracks the vendor release feed; the rest track npm.\n',
+    upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly.\n',
+  },
+  image: {
+    list: 'Usage: sandbox image list [--json, -j]\n\nList local workspace images.\n',
+    build: 'Usage: sandbox image build\n\nBuild a verified candidate from pinned versions; activate explicitly afterwards.\n',
+    activate: 'Usage: sandbox image activate <digest>\n\nAsk for confirmation when instances are live; recreates the container on the new image at the next start.\n',
+    rollback: 'Usage: sandbox image rollback <digest>\n\nAsk for confirmation when instances are live. Requires an earlier activation and does not reverse a data migration.\n',
+  },
+  credentials: {
+    list: 'Usage: sandbox credentials list [--json, -j]\n\nList instances holding credential files.\n',
+    show: 'Usage: sandbox credentials show --instance, -i <name>\n\nKey names only; values are never printed.\n',
+    set: 'Usage: sandbox credentials set --instance, -i <name> --file, -f <path>\n\nStore KEY=VALUE lines host-side with owner-only permissions. Secrets are never accepted as command-line arguments.\n',
+    clear: 'Usage: sandbox credentials clear --instance, -i <name>\n\nDelete the instance credential file.\n',
+  },
+  runtime: {
+    list: 'Usage: sandbox runtime list [--json, -j]\n\nShow every known container runtime with capabilities and verification status.\n',
+    use: 'Usage: sandbox runtime use <name>\n\nSelect the host default for new workspaces; existing workspaces keep theirs until configured otherwise.\n',
+  },
+  terminal: {
+    list: 'Usage: sandbox terminal list [--json, -j]\n\nShow every known terminal engine.\n',
+    use: 'Usage: sandbox terminal use <name>\n\nSelect the host default for new workspaces; existing workspaces keep theirs until configured otherwise.\n',
+  },
+};
+
+/** Per-action help block, or null when the action is unknown. */
+export function describeAction(group: string, action: string): string | null {
+  return ACTION_HELP[group]?.[action] ?? null;
 }

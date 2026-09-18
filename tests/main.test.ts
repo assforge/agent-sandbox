@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -39,7 +39,7 @@ describe('main', () => {
   it('serves help and version without touching the environment', async () => {
     const help = deps();
     expect(await main(['--help'], help)).toBe(0);
-    expect(help.out.join('')).toContain('sandbox doctor');
+    expect(help.out.join('')).toContain('Read-only diagnostics');
     const version = deps();
     expect(await main(['--version'], version)).toBe(0);
     expect(version.out.join('')).toMatch(/sandbox \d+\.\d+\.\d+/);
@@ -86,6 +86,46 @@ describe('main', () => {
     expect(await main(['workspace', 'help'], deps())).toBe(0);
     expect(await main(['agent', 'help'], deps())).toBe(0);
     expect(await main(['image', 'help'], deps())).toBe(0);
+  });
+
+  it('prints group help for bare groups and per-action help on demand', async () => {
+    const group = deps();
+    expect(await main(['workspace'], group)).toBe(0);
+    expect(group.out.join('')).toContain('Actions: list, status');
+    const action = deps();
+    expect(await main(['workspace', 'restart', '--help'], action)).toBe(0);
+    expect(action.out.join('')).toContain('Usage: sandbox workspace restart');
+    const image = deps();
+    expect(await main(['image', 'activate', '--help'], image)).toBe(0);
+    expect(image.out.join('')).toContain('Usage: sandbox image activate');
+    const unknown = deps();
+    expect(await main(['workspace', 'frobnicate', '--help'], unknown)).toBe(2);
+    const add = deps();
+    expect(await main(['add', '--help'], add)).toBe(0);
+    expect(add.out.join('')).toContain('Usage: sandbox add');
+  });
+
+  it('checks and applies self-updates without touching workspaces', async () => {
+    const view = (version: string) => ({
+      run: (command: string, args: string[]) => {
+        if (command === 'npm' && args[0] === 'view') return { status: 0, stdout: `${version}\n`, stderr: '' };
+        if (command === 'npm' && args[0] === 'install') return { status: 0, stdout: 'added\n', stderr: '' };
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+    const check = deps({ runner: view('9.9.9') });
+    expect(await main(['update', '--check'], check)).toBe(0);
+    expect(check.out.join('')).toMatch(/current .* latest 9\.9\.9/);
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    const current = deps({ runner: view(pkg.version) });
+    expect(await main(['update'], current)).toBe(0);
+    expect(current.out.join('')).toContain('already current');
+    const upgrade = deps({ runner: view('9.9.9') });
+    expect(await main(['update'], upgrade)).toBe(0);
+    expect(upgrade.out.join('')).toMatch(/updated sandbox .* -> 9\.9\.9/);
+    const broken = deps({ runner: { run: () => ({ status: 1, stdout: '', stderr: 'boom' }) } });
+    expect(await main(['update'], broken)).toBe(1);
+    expect(broken.err.join('')).toMatch(/cannot check/);
   });
 
   it('migrates the legacy home directory before dispatch', async () => {
