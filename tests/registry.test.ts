@@ -52,6 +52,28 @@ describe('workspaceId', () => {
   it('resolves the default registry path under the home directory', () => {
     expect(defaultRegistryPath('/Users/a')).toBe('/Users/a/.sandbox/registry.json');
   });
+
+  it('rejects corrupt entries with the key instead of crashing later', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sandbox-reg-'));
+    try {
+      const path = join(dir, 'registry.json');
+      const cases: [string, unknown][] = [
+        ['non-object entry', { version: 1, workspaces: { a: 42 } }],
+        ['empty id', { version: 1, workspaces: { a: { id: '', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [] } } }],
+        ['id key mismatch', { version: 1, workspaces: { a: { id: 'b', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [] } } }],
+        ['relative root', { version: 1, workspaces: { a: { id: 'a', root: 'w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [] } } }],
+        ['bad instance', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [{ name: '', kind: 'k', window: 'w' }], mounts: [] } } }],
+        ['bad mounts', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [42] } } }],
+        ['bad network', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], network: 'wide' } } }],
+      ];
+      for (const [label, document] of cases) {
+        writeFileSync(path, JSON.stringify(document), 'utf8');
+        expect(() => loadRegistry(path), label).toThrow(/invalid|unsupported/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('registry persistence', () => {

@@ -5,13 +5,13 @@ import { describe, expect, it } from 'vitest';
 
 import { agentEngine, agentEngines, outdatedEngines } from '../src/engines/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
-import { normalizeLexical, redactedConfig, rejectForbiddenMount, validateRegistryShape } from '../src/config.js';
+import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
 import { emptyRegistry, registerWorkspace } from '../src/registry.js';
 import { activateImage, buildCandidate, recordActivation, rollbackImage } from '../src/image.js';
 import { acquireLock } from '../src/lock.js';
 import { assertWindowName } from '../src/terminal.js';
-import { approveMigration, dryRunMigration } from '../src/migrate.js';
+import { dryRunMigration } from '../src/migrate.js';
 import { checkReadiness, configurationFingerprint, freshGeneration } from '../src/readiness.js';
 import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../src/help.js';
 
@@ -61,8 +61,6 @@ describe('config', () => {
     const registry = emptyRegistry();
     const entry = registerWorkspace(registry, '/w', ['/w']);
     expect(JSON.stringify(redactedConfig(entry))).not.toMatch(/token|secret|key/i);
-    expect(validateRegistryShape({ version: 1, workspaces: {} })).toEqual([]);
-    expect(validateRegistryShape({ version: 2 }).length).toBeGreaterThan(0);
   });
 
   it('normalizes lexical spellings before policy checks', () => {
@@ -71,8 +69,6 @@ describe('config', () => {
     expect(normalizeLexical('/')).toBe('/');
     expect(rejectForbiddenMount('/./')).toMatch(/root/);
     expect(rejectForbiddenMount(`${homedir()}/sub/..`)).toMatch(/HOME/);
-    expect(validateRegistryShape(null)).toEqual(['registry root must be an object']);
-    expect(validateRegistryShape(42)).toEqual(['registry root must be an object']);
   });
 
   it('redacts instance lists without dropping entries', () => {
@@ -188,14 +184,11 @@ describe('migration', () => {
     );
     expect(plan.mappings).toHaveLength(2);
     expect(JSON.stringify(plan)).not.toMatch(/token|secret/i);
-    expect(approveMigration(plan, false)).toMatch(/dry-run/);
-    expect(approveMigration(plan, true)).toMatch(/quiescing/);
   });
 
   it('maps empty inventories and non-state volumes', () => {
     const empty = dryRunMigration([], 'w-abc');
     expect(empty).toEqual({ source: 'claude-relay', mappings: [] });
-    expect(approveMigration(empty, false)).toMatch(/0 legacy resources/);
     const mixed = dryRunMigration(
       [
         { kind: 'volume', name: 'claude-relay-m2' },

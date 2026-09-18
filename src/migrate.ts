@@ -37,8 +37,3 @@ export function dryRunMigration(existing: LegacyResource[], workspaceIdValue: st
   }
   return { source: 'claude-relay', mappings };
 }
-
-export function approveMigration(plan: MigrationPlan, apply: boolean): string {
-  if (!apply) return `dry-run: ${plan.mappings.length} legacy resources mapped, no changes made`;
-  return `apply approved: copy ${plan.mappings.filter((m) => m.copiesState).length} state volumes after quiescing writers`;
-}
