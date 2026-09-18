@@ -42,7 +42,7 @@ import {
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { migrateHomeDir, sandboxDir } from '../paths.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, addHelp, credentialsHelp, describeAction, imageHelp, forgetHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
+import { agentHelp, linkHelp, credentialsHelp, describeAction, imageHelp, unlinkHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
   constructor(
@@ -515,9 +515,9 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     case 'workspace':
       if (printGroupHelp(deps, 'workspace', parsed.action, parsed.help, workspaceHelp)) return 0;
       return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
-    case 'register': {
+    case 'link': {
       if (parsed.help) {
-        deps.stdout(addHelp());
+        deps.stdout(linkHelp());
         return 0;
       }
       const registry = loadRegistryOrThrow(deps);
@@ -531,9 +531,9 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
     }
-    case 'unregister': {
+    case 'unlink': {
       if (parsed.help) {
-        deps.stdout(forgetHelp());
+        deps.stdout(unlinkHelp());
         return 0;
       }
       const registry = loadRegistryOrThrow(deps);
@@ -690,9 +690,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => describe(i.name, i.kind)).join(', ') || '(none)'}\n`);
       return 0;
     }
-    case 'add': {
+    case 'link': {
       const root = takeRestOption(rest, ['--root', '-r']);
-      if (!root) throw new UsageError('workspace add requires --root <path>');
+      if (!root) throw new UsageError('workspace link requires --root <path>');
       if (!existsSync(root)) {
         throw new CliError(`workspace root does not exist: ${root}`, 2);
       }
@@ -702,7 +702,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
     }
-    case 'forget': {
+    case 'unlink': {
       const root = workspace ? defaultCanonicalize(workspace) : defaultCanonicalize(deps.cwd);
       return unregisterWorkspace(deps, registry, root);
     }

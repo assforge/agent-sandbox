@@ -101,9 +101,12 @@ describe('main', () => {
     expect(image.out.join('')).toContain('Usage: sandbox image activate');
     const unknown = deps();
     expect(await main(['workspace', 'frobnicate', '--help'], unknown)).toBe(2);
+    const retired = deps();
+    expect(await main(['workspace', 'add'], retired)).toBe(2);
+    expect(await main(['workspace', 'forget'], retired)).toBe(2);
     const add = deps();
-    expect(await main(['add', '--help'], add)).toBe(0);
-    expect(add.out.join('')).toContain('Usage: sandbox add');
+    expect(await main(['link', '--help'], add)).toBe(0);
+    expect(add.out.join('')).toContain('Usage: sandbox link');
   });
 
   it('checks and applies self-updates without touching workspaces', async () => {
