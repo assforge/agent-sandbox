@@ -22,12 +22,15 @@ RUN apt-get update \
     "@github/copilot@${COPILOT_VERSION}" \
   && npm cache clean --force
 
-# Non-root agent user. Installed binaries live outside the home volume;
-# the home volume persists agent configuration and history per workspace.
-# The agent UID varies by builder base (docker resolves 1000, the Apple
-# builder already occupies it and resolves 1001). All ownership moves use
-# the name, never a number; a workspace is pinned to one runtime anyway.
-RUN useradd -m -s /bin/bash agent \
+# Non-root agent user for everything inside the workspace container.
+# The UID is pinned: the node base already owns 1000, and home volumes
+# persist numeric ownership across image generations, so an unpinned
+# UID would lock the agent out of migrated state after a base change.
+# Never hard-code the number anywhere else; always use the name.
+# HOME must be explicit because build steps run as root with this HOME
+# (so root-owned caches land here); the whole tree is handed back below.
+ENV HOME=/home/agent
+RUN useradd -u 1001 -m -s /bin/bash agent \
   && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot \
     /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
   && chown -R agent:agent /home/agent
@@ -35,13 +38,19 @@ RUN useradd -m -s /bin/bash agent \
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
 
+# Claude ships outside npm and must live outside the home volume: the
+# volume is mounted over /home/agent at runtime and would mask anything
+# baked in there. The installer lays everything under $HOME, so point it
+# at /opt/claude (agent-owned, refreshed on every build). Runs as root;
+# the trees are handed back below.
+RUN mkdir -p /opt/claude && export HOME=/opt/claude \
+  && curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
+  && chown -R agent:agent /opt/claude \
+  && chown -R agent:agent /home/agent
+ENV PATH="/opt/claude/.local/bin:${PATH}"
+
 USER agent
 WORKDIR /home/agent/work
-
-# Claude ships outside npm: the official installer lands in ~/.local/bin,
-# which is outside the persisted home volume and refreshed on every build.
-RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}"
-ENV PATH="/home/agent/.local/bin:${PATH}"
 
 ENTRYPOINT ["/usr/local/bin/sandbox-entrypoint.sh"]
 CMD ["sleep", "infinity"]

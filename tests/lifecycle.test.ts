@@ -437,9 +437,11 @@ describe('workspace lifecycle flows', () => {
       expect(world.networks.has(net)).toBe(true);
       const createCall = world.calls.find((call) => call.includes('network') && call.includes('create'));
       expect(createCall).toContain('--internal');
-      const runCall = world.calls.find((call) => call[0] === 'docker' && call[1] === 'run');
+      const runCall = world.calls.find((call) => call[0] === 'docker' && call[1] === 'run' && call.includes('--cap-drop'));
       expect(runCall).toContain('--cap-drop');
       expect(runCall).toContain(net);
+      const repairCall = world.calls.find((call) => call[0] === 'docker' && call.includes('chown'));
+      expect(repairCall).toEqual(expect.arrayContaining(['run', '--rm', '--user', 'root', '--entrypoint', 'chown']));
       expect(await main(['workspace', 'configure', '--workspace', root, '--network', 'open'], deps)).toBe(0);
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       expect(world.containers.get(`sandbox-${id}`)?.network).toBe(net);
