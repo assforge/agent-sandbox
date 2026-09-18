@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseArgs, splitForwarded, SUPPORTED_AGENTS, UsageError } from '../src/cli.js';
+import { canonicalAction, parseArgs, splitForwarded, SUPPORTED_AGENTS, UsageError } from '../src/cli.js';
 
 describe('splitForwarded', () => {
   it('forwards everything after the first -- verbatim', () => {
@@ -39,10 +39,13 @@ describe('parseArgs', () => {
     expect(parseArgs(['add'])).toEqual({ kind: 'register', root: undefined, workspace: undefined, help: false });
     expect(parseArgs(['add', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: undefined, help: false });
     expect(parseArgs(['--workspace', '/w', 'add', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: '/w', help: false });
-    expect(parseArgs(['rm'])).toEqual({ kind: 'unregister', root: undefined, workspace: undefined, help: false });
-    expect(parseArgs(['rm', '/w/repo'])).toEqual({ kind: 'unregister', root: '/w/repo', workspace: undefined, help: false });
+    expect(parseArgs(['forget'])).toEqual({ kind: 'unregister', root: undefined, workspace: undefined, help: false });
+    expect(parseArgs(['forget', '/w/repo'])).toEqual({ kind: 'unregister', root: '/w/repo', workspace: undefined, help: false });
     expect(parseArgs(['add', '--help'])).toMatchObject({ kind: 'register', help: true });
-    for (const argv of [['add', 'a', 'b'], ['add', '--json'], ['rm', 'a', 'b'], ['register'], ['unregister']]) {
+    expect(canonicalAction('workspace', 'register')).toBe('add');
+    expect(canonicalAction('workspace', 'unregister')).toBe('forget');
+    expect(canonicalAction('workspace', 'start')).toBe('start');
+    for (const argv of [['add', 'a', 'b'], ['add', '--json'], ['forget', 'a', 'b'], ['register'], ['unregister'], ['rm']]) {
       try {
         parseArgs(argv);
         expect.unreachable();

@@ -91,7 +91,8 @@ describe('main', () => {
   it('prints group help for bare groups and per-action help on demand', async () => {
     const group = deps();
     expect(await main(['workspace'], group)).toBe(0);
-    expect(group.out.join('')).toContain('Actions: list, status');
+    expect(group.out.join('')).toContain('Commands:');
+    expect(group.out.join('')).toContain('prune');
     const action = deps();
     expect(await main(['workspace', 'restart', '--help'], action)).toBe(0);
     expect(action.out.join('')).toContain('Usage: sandbox workspace restart');

@@ -333,10 +333,12 @@ describe('help', () => {
       expect(top).toContain(token);
     }
     expect(agentHelp()).toContain('claude, opencode');
-    expect(workspaceHelp()).toContain('attach only reconnects');
+    expect(workspaceHelp()).toContain('  attach       Reconnect to the terminal session');
     expect(imageHelp()).toContain('does not reverse a data migration');
     expect(describeAction('workspace', 'restart')).toContain('Usage: sandbox workspace restart');
     expect(describeAction('workspace', 'upgrade')).toContain('sandbox workspace upgrade [agent|all]');
+    expect(describeAction('workspace', 'register')).toContain('Usage: sandbox workspace add');
+    expect(describeAction('workspace', 'prune')).toContain('Usage: sandbox workspace prune');
     expect(describeAction('image', 'activate')).toContain('Usage: sandbox image activate');
     expect(describeAction('workspace', 'nope')).toBeNull();
   });
