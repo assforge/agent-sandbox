@@ -11,6 +11,7 @@ export type ParsedCommand =
   | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string }
   | { kind: 'credentials'; action: string; rest: string[]; workspace?: string }
   | { kind: 'runtime'; action: string; rest: string[] }
+  | { kind: 'terminal'; action: string; rest: string[] }
   | { kind: 'image'; action: string; rest: string[]; workspace?: string };
 
 export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as const;
@@ -74,7 +75,7 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (rest.length > 0) throw new UsageError('sandbox doctor takes no positional arguments');
     return { kind: 'doctor', json, workspace };
   }
-  if (first === 'workspace' || first === 'agent' || first === 'image' || first === 'credentials' || first === 'runtime') {
+  if (first === 'workspace' || first === 'agent' || first === 'image' || first === 'credentials' || first === 'runtime' || first === 'terminal') {
     const action = rest[0];
     if (!action) throw new UsageError(`sandbox ${first} requires an action`);
     const tail = [...rest.slice(1), ...(forwarded.length > 0 ? ['--', ...forwarded] : [])];
@@ -82,6 +83,7 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (first === 'image') return { kind: 'image', action, rest: tail, workspace };
     if (first === 'credentials') return { kind: 'credentials', action, rest: tail, workspace };
     if (first === 'runtime') return { kind: 'runtime', action, rest: tail };
+    if (first === 'terminal') return { kind: 'terminal', action, rest: tail };
     return { kind: 'agentAdmin', action, rest: tail, workspace };
   }
   if ((SUPPORTED_AGENTS as readonly string[]).includes(first)) {

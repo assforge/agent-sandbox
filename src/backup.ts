@@ -89,6 +89,7 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     homeVolume: requiredName(record, 'homeVolume'),
     network: record['network'] === 'restricted' ? 'restricted' : 'open',
     runtime: typeof record['runtime'] === 'string' && record['runtime'].length > 0 ? (record['runtime'] as string) : 'docker',
+    terminal: typeof record['terminal'] === 'string' && record['terminal'].length > 0 ? (record['terminal'] as string) : 'tmux',
     mounts,
   };
   registry.workspaces[id] = entry;

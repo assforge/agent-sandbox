@@ -3,9 +3,11 @@ import { join } from 'node:path';
 
 export interface HostConfig {
   runtime: string;
+  terminal: string;
 }
 
 export const DEFAULT_RUNTIME = 'docker';
+export const DEFAULT_TERMINAL = 'tmux';
 
 export function hostConfigPath(homeDir: string): string {
   return join(homeDir, '.sandbox', 'config.json');
@@ -23,7 +25,11 @@ export function loadHostConfig(homeDir: string): HostConfig {
   }
   const record = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<string, unknown>;
   const runtime = record['runtime'];
-  return { runtime: typeof runtime === 'string' && runtime.length > 0 ? runtime : DEFAULT_RUNTIME };
+  const terminal = record['terminal'];
+  return {
+    runtime: typeof runtime === 'string' && runtime.length > 0 ? runtime : DEFAULT_RUNTIME,
+    terminal: typeof terminal === 'string' && terminal.length > 0 ? terminal : DEFAULT_TERMINAL,
+  };
 }
 
 export function saveHostConfig(homeDir: string, config: HostConfig): void {

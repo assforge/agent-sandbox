@@ -37,8 +37,8 @@ export function tmuxSelectWindow(session: string, window: string): ExecSpec {
  * attaches (including over SSH, which needs no nested session). The child
  * inherits the environment, so SSH_AUTH_SOCK and friends pass through.
  */
-export function tmuxReattach(session: string, insideTmux: boolean): ExecSpec {
-  if (insideTmux) return { command: 'tmux', args: ['switch-client', '-t', session] };
+export function tmuxReattach(session: string, insideTerminal: boolean): ExecSpec {
+  if (insideTerminal) return { command: 'tmux', args: ['switch-client', '-t', session] };
   return { command: 'tmux', args: ['attach-session', '-t', session] };
 }
 

@@ -23,7 +23,7 @@ import {
   type RunResult,
 } from '../docker.js';
 import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
-import { terminalEngine } from '../engines/terminal.js';
+import { TERMINAL_ENGINES, type TerminalEngine } from '../engines/terminal.js';
 import { buildCandidate, activateImage, rollbackImage } from '../image.js';
 import { acquireLock } from '../lock.js';
 import { CONTAINER_WORKDIR, ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
@@ -41,7 +41,7 @@ import {
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, credentialsHelp, imageHelp, runtimeHelp, topHelp, workspaceHelp } from '../help.js';
+import { agentHelp, credentialsHelp, imageHelp, runtimeHelp, terminalHelp, topHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
   constructor(
@@ -67,7 +67,14 @@ function agentRegistry(deps: MainDeps): Map<string, AgentEngine> {
   return agentEngines(loadUserCatalog(deps.homeDir));
 }
 
-const term = terminalEngine('tmux');
+function selectTerminal(deps: MainDeps, entry?: WorkspaceEntry): TerminalEngine {
+  const wanted = entry?.terminal ?? loadHostConfig(deps.homeDir).terminal;
+  const engine = TERMINAL_ENGINES[wanted];
+  if (!engine) {
+    throw new CliError(`unknown terminal engine: ${wanted}; run: sandbox terminal list`, 2);
+  }
+  return engine;
+}
 
 export interface MainDeps {
   cwd: string;
@@ -78,7 +85,7 @@ export interface MainDeps {
   pathLookup: (name: string) => string | null;
   commandSucceeds: (command: string, args: string[]) => boolean;
   runner: CommandRunner;
-  insideTmux: boolean;
+  insideTerminal: boolean;
   stdinIsTTY: boolean;
   assumeYes: boolean;
   confirm: (question: string) => Promise<boolean>;
@@ -142,7 +149,7 @@ export function realDeps(assumeYes: boolean): MainDeps {
       }
     },
     runner,
-    insideTmux: process.env['TMUX'] !== undefined && process.env['TMUX'] !== '',
+    insideTerminal: (process.env['TMUX'] ?? '') !== '' || process.env['HERDR_ENV'] === '1',
     stdinIsTTY: process.stdin.isTTY ?? false,
     assumeYes,
     confirm: async (question: string): Promise<boolean> => {
@@ -210,7 +217,7 @@ async function resolveAndEnsure(
     const problem = rejectForbiddenMount(mount, deps.homeDir);
     if (problem) throw new CliError(`refused mount ${mount}: ${problem}`, 2);
   }
-  const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
+  const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir, runtime: loadHostConfig(deps.homeDir).runtime, terminal: loadHostConfig(deps.homeDir).terminal });
   saveRegistry(registryPathOf(deps), registry);
   return entry;
 }
@@ -273,6 +280,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         networkListed.stdout.split('\n').map((line) => line.trim()).includes(network);
       const deadWindows = current ? deadRosterWindows(deps, current) : [];
       const doctorRt = current ? selectRuntime(deps, current) : selectRuntime(deps);
+      const doctorTerm = current ? selectTerminal(deps, current) : selectTerminal(deps);
       const checks = runDoctor(
         {
           nodeVersion: deps.nodeVersion,
@@ -285,6 +293,11 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
             args: doctorRt.doctorProbes.args,
             verified: doctorRt.verified,
           },
+          terminal: {
+            display: doctorTerm.name === 'tmux' ? 'tmux' : 'Herder',
+            binary: doctorTerm.cliBinary,
+            installHint: doctorTerm.installHint(deps.platform),
+          },
         },
         { image: current?.image ?? null, network: current ? current.network : null, networkExists, deadWindows },
       );
@@ -295,13 +308,16 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     case 'shell': {
       const name = parsed.kind === 'shell' ? (parsed.name ?? 'shell') : 'shell';
       try {
-        term.assertWindowName(name);
+        // Name validation precedes resolution; the shared charset covers
+        // every registered terminal engine.
+        selectTerminal(deps).assertWindowName(name);
       } catch (error) {
         throw new CliError((error as Error).message, 2);
       }
       const registry = loadRegistryOrThrow(deps);
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
       const rt = selectRuntime(deps, entry);
+      const term = selectTerminal(deps, entry);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
@@ -315,20 +331,22 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       } finally {
         handle.release();
       }
-      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTmux);
+      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTerminal);
       return 0;
     }
     case 'agent': {
       const def = agentEngine(agents, parsed.agent);
       const name = parsed.name ?? parsed.agent;
       try {
-        term.assertWindowName(name);
+        // See shell branch: shared charset, validated before resolution.
+        selectTerminal(deps).assertWindowName(name);
       } catch (error) {
         throw new CliError((error as Error).message, 2);
       }
       const registry = loadRegistryOrThrow(deps);
       const entry = await resolveAndEnsure(deps, registry, parsed.workspace);
       const rt = selectRuntime(deps, entry);
+      const term = selectTerminal(deps, entry);
       const same = entry.instances.find((item) => item.name === name);
       if (same && same.kind !== parsed.agent) {
         throw new CliError(`instance name is occupied by another agent: ${name} runs ${same.kind}`, 1);
@@ -356,7 +374,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         handle.release();
       }
       deps.stdout(`${launched} window ${name} (${parsed.agent}) in session ${entry.session}\n`);
-      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTmux);
+      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTerminal);
       return 0;
     }
     case 'workspace':
@@ -368,7 +386,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         throw new CliError(`workspace root does not exist: ${raw}`, 2);
       }
       const canonical = defaultCanonicalize(raw);
-      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
+      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir, runtime: loadHostConfig(deps.homeDir).runtime, terminal: loadHostConfig(deps.homeDir).terminal });
       saveRegistry(registryPathOf(deps), registry);
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
@@ -385,6 +403,10 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return credentialsCommand(deps, parsed.action, parsed.rest, parsed.workspace);
     case 'runtime':
       return runtimeCommand(deps, parsed.action, parsed.rest);
+    case 'terminal':
+      return terminalCommand(deps, parsed.action, parsed.rest);
+    case 'terminal':
+      return terminalCommand(deps, parsed.action, parsed.rest);
     case 'image':
       return imageCommand(deps, parsed.action, parsed.rest, parsed.workspace);
   }
@@ -408,12 +430,13 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
     throw new CliError(`workspace is not registered: ${root}`, 1);
   }
   const rt = selectRuntime(deps, entry);
+  const term = selectTerminal(deps, entry);
   let state = rt.containerState(deps.runner, entry.container, entry.id);
   const alive = term.sessionAlive(deps.runner, entry.session);
   const live = state === 'running' || alive || entry.instances.length > 0;
   if (live) {
     const approved = await deps.confirm(
-      `unregister ${entry.id}? This stops its container and kills its tmux session. Volumes, networks, images, and credentials are kept.`,
+      `unregister ${entry.id}? This stops its container and kills its terminal session. Volumes, networks, images, and credentials are kept.`,
     );
     if (!approved) throw new CliError('unregister cancelled; nothing was changed', 1);
   }
@@ -434,6 +457,7 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   }
 }/** Roster windows with no live pane. Empty when the session is absent. */
 function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
+  const term = selectTerminal(deps, entry);
   if (!term.sessionAlive(deps.runner, entry.session)) return [];
   const dead: string[] = [];
   for (const instance of entry.instances) {
@@ -476,6 +500,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'status': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
+      const term = selectTerminal(deps, entry);
       const state = rt.containerState(deps.runner, entry.container, entry.id);
       const alive = term.sessionAlive(deps.runner, entry.session);
       const windows = alive
@@ -499,7 +524,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         throw new CliError(`workspace root does not exist: ${root}`, 2);
       }
       const canonical = defaultCanonicalize(root);
-      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir });
+      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir, runtime: loadHostConfig(deps.homeDir).runtime, terminal: loadHostConfig(deps.homeDir).terminal });
       saveRegistry(registryPathOf(deps), registry);
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
@@ -539,6 +564,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'attach': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
+      const term = selectTerminal(deps, entry);
       if (!term.sessionAlive(deps.runner, entry.session)) {
         throw new CliError(`no session for workspace ${entry.id}; run: sandbox workspace start`, 1);
       }
@@ -546,7 +572,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (state !== 'running') {
         deps.stderr(`warning: container ${entry.container} is ${state}; windows will be dead. Run: sandbox workspace start\n`);
       }
-      term.reattach(deps.runner, entry.session, deps.insideTmux);
+      term.reattach(deps.runner, entry.session, deps.insideTerminal);
       return 0;
     }
     case 'logs': {
@@ -566,6 +592,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'reopen': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
+      const term = selectTerminal(deps, entry);
       const noAttach = rest.includes('--no-attach');
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
@@ -595,7 +622,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       } finally {
         handle.release();
       }
-      if (!noAttach) term.reattach(deps.runner, entry.session, deps.insideTmux);
+      if (!noAttach) term.reattach(deps.runner, entry.session, deps.insideTerminal);
       return 0;
     }
     case 'exec': {
@@ -628,7 +655,11 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (runtime !== undefined && !RUNTIME_ENGINES[runtime]) {
         throw new UsageError(`workspace configure --runtime must be one of: ${Object.keys(RUNTIME_ENGINES).join(', ')}`);
       }
-      if (!addMount && !dropMount && network === undefined && runtime === undefined) {
+      const terminal = takeRestOption(rest, ['--terminal']);
+      if (terminal !== undefined && !TERMINAL_ENGINES[terminal]) {
+        throw new UsageError(`workspace configure --terminal must be one of: ${Object.keys(TERMINAL_ENGINES).join(', ')}`);
+      }
+      if (!addMount && !dropMount && network === undefined && runtime === undefined && terminal === undefined) {
         deps.stdout(`${JSON.stringify(redactedConfig(entry), null, 2)}\n`);
         return 0;
       }
@@ -645,11 +676,15 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (runtime !== undefined && runtime !== entry.runtime) {
         deps.stdout(`plan: switch runtime ${entry.runtime} -> ${runtime} (recreates the container on next start)\n`);
       }
+      if (terminal !== undefined && terminal !== entry.terminal) {
+        deps.stdout(`plan: switch terminal ${entry.terminal} -> ${terminal} (recreates windows on next start)\n`);
+      }
       const approved = await deps.confirm('apply these changes?');
       if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
       if (addMount && !entry.mounts.includes(defaultCanonicalize(addMount))) entry.mounts.push(defaultCanonicalize(addMount));
       if (network !== undefined) entry.network = network;
       if (runtime !== undefined) entry.runtime = runtime;
+      if (terminal !== undefined) entry.terminal = terminal;
       if (dropMount) {
         const canonicalDrop = defaultCanonicalize(dropMount);
         if (normalizeLexical(canonicalDrop) === normalizeLexical(entry.root)) {
@@ -741,10 +776,11 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (source !== 'claude-relay') throw new UsageError('workspace migrate requires --source claude-relay');
       const apply = rest.includes('--apply');
       const inventoryRt = selectRuntime(deps);
+      const inventoryTerm = selectTerminal(deps);
       const existing = [
         ...inventoryRt.listContainers(deps.runner).map((name) => ({ kind: 'container' as const, name })),
         ...inventoryRt.listVolumes(deps.runner).map((name) => ({ kind: 'volume' as const, name })),
-        ...term.listSessions(deps.runner).map((name) => ({ kind: 'session' as const, name })),
+        ...inventoryTerm.listSessions(deps.runner).map((name) => ({ kind: 'session' as const, name })),
       ];
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
@@ -993,12 +1029,46 @@ async function runtimeCommand(deps: MainDeps, action: string, rest: string[]): P
       if (!RUNTIME_ENGINES[name]) {
         throw new CliError(`unknown runtime engine: ${name}; run: sandbox runtime list`, 2);
       }
-      saveHostConfig(deps.homeDir, { runtime: name });
+      const config = loadHostConfig(deps.homeDir);
+      saveHostConfig(deps.homeDir, { runtime: name, terminal: config.terminal });
       deps.stdout(`selected runtime ${name} for new workspaces\n`);
       return 0;
     }
     default:
       throw new UsageError(`unknown runtime action: ${action}`);
+  }
+}
+
+async function terminalCommand(deps: MainDeps, action: string, rest: string[]): Promise<number> {
+  switch (action) {
+    case 'help':
+      deps.stdout(terminalHelp());
+      return 0;
+    case 'list': {
+      const selected = loadHostConfig(deps.homeDir).terminal;
+      const rows = Object.values(TERMINAL_ENGINES).map((engine) => ({ name: engine.name, selected: engine.name === selected }));
+      if (rest.includes('--json')) {
+        deps.stdout(`${JSON.stringify({ terminals: rows }, null, 2)}\n`);
+        return 0;
+      }
+      for (const row of rows) {
+        deps.stdout(`${row.name}${row.selected ? ' (selected)' : ''}\n`);
+      }
+      return 0;
+    }
+    case 'use': {
+      const name = rest[0];
+      if (!name) throw new UsageError('terminal use requires <name>');
+      if (!TERMINAL_ENGINES[name]) {
+        throw new CliError(`unknown terminal engine: ${name}; run: sandbox terminal list`, 2);
+      }
+      const config = loadHostConfig(deps.homeDir);
+      saveHostConfig(deps.homeDir, { runtime: config.runtime, terminal: name });
+      deps.stdout(`selected terminal ${name} for new workspaces\n`);
+      return 0;
+    }
+    default:
+      throw new UsageError(`unknown terminal action: ${action}`);
   }
 }
 
