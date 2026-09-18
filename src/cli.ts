@@ -5,14 +5,15 @@ export type ParsedCommand =
   | { kind: 'agent'; agent: string; name?: string; workspace?: string; forwarded: string[]; noAttach?: boolean }
   | { kind: 'shell'; name?: string; workspace?: string; noAttach?: boolean }
   | { kind: 'doctor'; json: boolean; workspace?: string }
-  | { kind: 'workspace'; action: string; rest: string[]; workspace?: string }
-  | { kind: 'register'; root?: string; workspace?: string }
-  | { kind: 'unregister'; root?: string; workspace?: string }
-  | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string }
-  | { kind: 'credentials'; action: string; rest: string[]; workspace?: string }
-  | { kind: 'runtime'; action: string; rest: string[] }
-  | { kind: 'terminal'; action: string; rest: string[] }
-  | { kind: 'image'; action: string; rest: string[]; workspace?: string };
+  | { kind: 'workspace'; action: string; rest: string[]; workspace?: string; help: boolean }
+  | { kind: 'register'; root?: string; workspace?: string; help: boolean }
+  | { kind: 'unregister'; root?: string; workspace?: string; help: boolean }
+  | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string; help: boolean }
+  | { kind: 'credentials'; action: string; rest: string[]; workspace?: string; help: boolean }
+  | { kind: 'runtime'; action: string; rest: string[]; help: boolean }
+  | { kind: 'terminal'; action: string; rest: string[]; help: boolean }
+  | { kind: 'image'; action: string; rest: string[]; workspace?: string; help: boolean }
+  | { kind: 'update'; check: boolean; help: boolean };
 
 export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as const;
 
@@ -47,7 +48,6 @@ export function parseArgs(argv: string[]): ParsedCommand {
   const { head, forwarded } = splitForwarded(argv);
   const args = [...head];
   const workspace = takeOption(args, ['--workspace', '-w']);
-  if (takeFlag(args, ['--help', '-h'])) return { kind: 'help' };
   if (takeFlag(args, ['--version', '-V'])) return { kind: 'version' };
   const noAttach = takeFlag(args, ['--no-attach']);
   if (args.length === 0) {
@@ -55,14 +55,34 @@ export function parseArgs(argv: string[]): ParsedCommand {
     return { kind: 'bare', workspace, noAttach };
   }
   const [first, ...rest] = args;
-  if (first === 'register' || first === 'unregister') {
+  if (first === 'workspace' || first === 'agent' || first === 'image' || first === 'credentials' || first === 'runtime' || first === 'terminal') {
+    const help = takeFlag(rest, ['--help', '-h']);
+    const action = rest[0] ?? '';
+    const tail = [...rest.slice(action ? 1 : 0), ...(forwarded.length > 0 ? ['--', ...forwarded] : [])];
+    if (first === 'workspace') return { kind: 'workspace', action, rest: tail, workspace, help };
+    if (first === 'image') return { kind: 'image', action, rest: tail, workspace, help };
+    if (first === 'credentials') return { kind: 'credentials', action, rest: tail, workspace, help };
+    if (first === 'runtime') return { kind: 'runtime', action, rest: tail, help };
+    if (first === 'terminal') return { kind: 'terminal', action, rest: tail, help };
+    return { kind: 'agentAdmin', action, rest: tail, workspace, help };
+  }
+  if (first === 'add' || first === 'rm') {
+    const help = takeFlag(rest, ['--help', '-h']);
     if (rest.length > 1) throw new UsageError(`sandbox ${first} takes at most one path`);
     const root = rest[0];
     if (root !== undefined && root.startsWith('-')) throw new UsageError(`unexpected option: ${root}`);
     if (forwarded.length > 0) throw new UsageError(`sandbox ${first} does not forward arguments`);
-    if (first === 'register') return { kind: 'register', root, workspace };
-    return { kind: 'unregister', root, workspace };
+    if (first === 'add') return { kind: 'register', root, workspace, help };
+    return { kind: 'unregister', root, workspace, help };
   }
+  if (first === 'update') {
+    const help = takeFlag(rest, ['--help', '-h']);
+    const check = takeFlag(rest, ['--check']);
+    if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
+    if (forwarded.length > 0) throw new UsageError('sandbox update does not forward arguments');
+    return { kind: 'update', check, help };
+  }
+  if (takeFlag(args, ['--help', '-h'])) return { kind: 'help' };
   if (first === 'shell') {
     if (rest.length > 2) throw new UsageError('sandbox shell takes at most --name <name>');
     const name = takeOption(rest, ['--name', '-n']);
@@ -74,17 +94,6 @@ export function parseArgs(argv: string[]): ParsedCommand {
     const json = takeFlag(rest, ['--json', '-j']) || forwarded.includes('--json');
     if (rest.length > 0) throw new UsageError('sandbox doctor takes no positional arguments');
     return { kind: 'doctor', json, workspace };
-  }
-  if (first === 'workspace' || first === 'agent' || first === 'image' || first === 'credentials' || first === 'runtime' || first === 'terminal') {
-    const action = rest[0];
-    if (!action) throw new UsageError(`sandbox ${first} requires an action`);
-    const tail = [...rest.slice(1), ...(forwarded.length > 0 ? ['--', ...forwarded] : [])];
-    if (first === 'workspace') return { kind: 'workspace', action, rest: tail, workspace };
-    if (first === 'image') return { kind: 'image', action, rest: tail, workspace };
-    if (first === 'credentials') return { kind: 'credentials', action, rest: tail, workspace };
-    if (first === 'runtime') return { kind: 'runtime', action, rest: tail };
-    if (first === 'terminal') return { kind: 'terminal', action, rest: tail };
-    return { kind: 'agentAdmin', action, rest: tail, workspace };
   }
   if ((SUPPORTED_AGENTS as readonly string[]).includes(first)) {
     if (rest.length > 2) throw new UsageError(`unexpected argument: ${rest[0]} (use --name for instances, -- for agent arguments)`);

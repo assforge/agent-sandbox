@@ -19,6 +19,7 @@ class FakeWorld {
   failBuild = false;
   lastBuildArgs: Record<string, string> = {};
   curlText = '2.1.277\n';
+  execVersions: string | null = null;
 
   imageIdOf = (image: string): string => {
     const alnum = image.replace(/[^a-zA-Z0-9]/g, '');
@@ -190,6 +191,13 @@ class FakeWorld {
       return {
         status: 0,
         stdout: JSON.stringify({ generation: container.generation, fingerprint: container.fingerprint, started_at: container.startedAt }),
+        stderr: '',
+      };
+    }
+    if (verb === 'exec' && rest.some((arg) => typeof arg === 'string' && arg.includes('claude --version'))) {
+      return {
+        status: 0,
+        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.154.0\nGitHub Copilot CLI 1.0.85.\n',
         stderr: '',
       };
     }
@@ -479,6 +487,24 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('warns on agent version drift inside running containers', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).not.toContain('agent-drift');
+      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.85.\n';
+      expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
+      expect(out.join('')).toContain('agent-drift-codex');
+      expect(out.join('')).toContain('sandbox workspace upgrade');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('mounts and unmounts extra paths with the root guard shared', async () => {
     const { home, root, deps, out } = setup();
     try {
@@ -582,10 +608,11 @@ describe('workspace lifecycle flows', () => {
     const { home, root, deps, out } = setup();
     try {
       const cwdDeps = { ...deps, cwd: root };
-      expect(await main(['register'], cwdDeps)).toBe(0);
+      expect(await main(['add'], cwdDeps)).toBe(0);
       expect(out.join('')).toContain('registered');
       expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces).not.toEqual({});
-      expect(await main(['register', join(home, 'no-such-dir')], cwdDeps)).toBe(2);
+      expect(await main(['add', join(home, 'no-such-dir')], cwdDeps)).toBe(2);
+      expect(await main(['register'], cwdDeps)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
@@ -595,13 +622,13 @@ describe('workspace lifecycle flows', () => {
   it('unregisters only after confirmation and keeps data resources', async () => {
     const { home, root, world, deps, out } = setup();
     try {
-      expect(await main(['unregister', root], deps)).toBe(1);
+      expect(await main(['rm', root], deps)).toBe(1);
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       const deny = { ...deps, assumeYes: false, confirm: async () => false };
-      expect(await main(['unregister', root], deny)).toBe(1);
-      expect(await main(['unregister', root], deps)).toBe(0);
+      expect(await main(['rm', root], deny)).toBe(1);
+      expect(await main(['rm', root], deps)).toBe(0);
       expect(out.join('')).toContain('unregistered');
       expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces).toEqual({});
       expect(world.volumes.size).toBeGreaterThan(0);

@@ -13,6 +13,20 @@ export interface ImageRunner {
   verifyCandidate: (tag: string) => boolean;
 }
 
+/** Version probe shared by upgrade inspect and the doctor drift check. */
+export const INSPECT_VERSIONS_SCRIPT = 'claude --version; opencode --version; codex --version; copilot --version';
+
+/** Parse the inspect probe: first tokens per line, keyed for buildCandidate. */
+export function parseInspectedVersions(stdout: string): Record<string, string> {
+  const versions: Record<string, string> = {};
+  const lines = stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
+  if (lines[1]) versions['opencode-ai'] = lines[1] as string;
+  if (lines[2]) versions['@openai/codex'] = (lines[2] as string).replace(/^codex-cli /, '');
+  if (lines[3]) versions['@github/copilot'] = (lines[3] as string).replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
+  return versions;
+}
+
 /** Build a candidate without secrets. Never retags the selected image. */
 export function buildCandidate(
   runner: ImageRunner,

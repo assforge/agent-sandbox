@@ -35,13 +35,14 @@ describe('parseArgs', () => {
     expect(parseArgs(['--no-attach'])).toMatchObject({ kind: 'bare', noAttach: true });
   });
 
-  it('parses the short register shortcut', () => {
-    expect(parseArgs(['register'])).toEqual({ kind: 'register', root: undefined, workspace: undefined });
-    expect(parseArgs(['register', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: undefined });
-    expect(parseArgs(['--workspace', '/w', 'register', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: '/w' });
-    expect(parseArgs(['unregister'])).toEqual({ kind: 'unregister', root: undefined, workspace: undefined });
-    expect(parseArgs(['unregister', '/w/repo'])).toEqual({ kind: 'unregister', root: '/w/repo', workspace: undefined });
-    for (const argv of [['register', 'a', 'b'], ['register', '--json'], ['unregister', 'a', 'b']]) {
+  it('parses the short add shortcut and retired register', () => {
+    expect(parseArgs(['add'])).toEqual({ kind: 'register', root: undefined, workspace: undefined, help: false });
+    expect(parseArgs(['add', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: undefined, help: false });
+    expect(parseArgs(['--workspace', '/w', 'add', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: '/w', help: false });
+    expect(parseArgs(['rm'])).toEqual({ kind: 'unregister', root: undefined, workspace: undefined, help: false });
+    expect(parseArgs(['rm', '/w/repo'])).toEqual({ kind: 'unregister', root: '/w/repo', workspace: undefined, help: false });
+    expect(parseArgs(['add', '--help'])).toMatchObject({ kind: 'register', help: true });
+    for (const argv of [['add', 'a', 'b'], ['add', '--json'], ['rm', 'a', 'b'], ['register'], ['unregister']]) {
       try {
         parseArgs(argv);
         expect.unreachable();
@@ -51,11 +52,28 @@ describe('parseArgs', () => {
     }
   });
 
+  it('prints group help for bare groups and per-action help on demand', () => {
+    expect(parseArgs(['workspace'])).toEqual({ kind: 'workspace', action: '', rest: [], workspace: undefined, help: false });
+    expect(parseArgs(['agent'])).toEqual({ kind: 'agentAdmin', action: '', rest: [], workspace: undefined, help: false });
+    expect(parseArgs(['workspace', 'restart', '--help'])).toMatchObject({ kind: 'workspace', action: 'restart', help: true });
+    expect(parseArgs(['workspace', '--help'])).toMatchObject({ kind: 'workspace', action: '', help: true });
+    expect(parseArgs(['image', 'build', '-h'])).toMatchObject({ kind: 'image', action: 'build', help: true });
+    expect(parseArgs(['update'])).toEqual({ kind: 'update', check: false, help: false });
+    expect(parseArgs(['update', '--check'])).toEqual({ kind: 'update', check: true, help: false });
+    expect(parseArgs(['update', '--help'])).toMatchObject({ kind: 'update', help: true });
+    try {
+      parseArgs(['update', 'extra']);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(UsageError);
+    }
+  });
+
   it('parses runtime group commands', () => {
-    expect(parseArgs(['runtime', 'list'])).toEqual({ kind: 'runtime', action: 'list', rest: [] });
-    expect(parseArgs(['runtime', 'use', 'apple'])).toEqual({ kind: 'runtime', action: 'use', rest: ['apple'] });
-    expect(parseArgs(['terminal', 'list'])).toEqual({ kind: 'terminal', action: 'list', rest: [] });
-    expect(parseArgs(['terminal', 'use', 'herder'])).toEqual({ kind: 'terminal', action: 'use', rest: ['herder'] });
+    expect(parseArgs(['runtime', 'list'])).toEqual({ kind: 'runtime', action: 'list', rest: [], help: false });
+    expect(parseArgs(['runtime', 'use', 'apple'])).toEqual({ kind: 'runtime', action: 'use', rest: ['apple'], help: false });
+    expect(parseArgs(['terminal', 'list'])).toEqual({ kind: 'terminal', action: 'list', rest: [], help: false });
+    expect(parseArgs(['terminal', 'use', 'herder'])).toEqual({ kind: 'terminal', action: 'use', rest: ['herder'], help: false });
   });
 
   it('accepts short flags for frequent options', () => {
@@ -69,18 +87,20 @@ describe('parseArgs', () => {
     expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined, noAttach: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });
     expect(parseArgs(['doctor'])).toEqual({ kind: 'doctor', json: false, workspace: undefined });
-    expect(parseArgs(['workspace', 'list'])).toEqual({ kind: 'workspace', action: 'list', rest: [], workspace: undefined });
+    expect(parseArgs(['workspace', 'list'])).toEqual({ kind: 'workspace', action: 'list', rest: [], workspace: undefined, help: false });
     expect(parseArgs(['workspace', 'exec', '--', 'ls', '-la'])).toEqual({
       kind: 'workspace',
       action: 'exec',
       rest: ['--', 'ls', '-la'],
       workspace: undefined,
+      help: false,
     });
     expect(parseArgs(['image', 'activate', 'abc123'])).toEqual({
       kind: 'image',
       action: 'activate',
       rest: ['abc123'],
       workspace: undefined,
+      help: false,
     });
   });
 
@@ -89,7 +109,6 @@ describe('parseArgs', () => {
       ['frobnicate'],
       ['claude', 'extra'],
       ['doctor', 'extra'],
-      ['workspace'],
       ['--', 'x'],
       ['shell', '--name'],
       ['shell', 'extra'],
@@ -114,9 +133,10 @@ describe('parseArgs', () => {
       action: 'list',
       rest: [],
       workspace: '/w',
+      help: false,
     });
-    expect(parseArgs(['agent', 'list'])).toEqual({ kind: 'agentAdmin', action: 'list', rest: [], workspace: undefined });
-    expect(parseArgs(['agent', 'help'])).toEqual({ kind: 'agentAdmin', action: 'help', rest: [], workspace: undefined });
-    expect(parseArgs(['image', 'build'])).toEqual({ kind: 'image', action: 'build', rest: [], workspace: undefined });
+    expect(parseArgs(['agent', 'list'])).toEqual({ kind: 'agentAdmin', action: 'list', rest: [], workspace: undefined, help: false });
+    expect(parseArgs(['agent', 'help'])).toEqual({ kind: 'agentAdmin', action: 'help', rest: [], workspace: undefined, help: false });
+    expect(parseArgs(['image', 'build'])).toEqual({ kind: 'image', action: 'build', rest: [], workspace: undefined, help: false });
   });
 });

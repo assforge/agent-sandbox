@@ -1,3 +1,5 @@
+import { BUILTIN_CATALOG } from './engines/agent.js';
+
 export type CheckStatus = 'ok' | 'warn' | 'fail';
 
 export interface DoctorCheck {
@@ -32,6 +34,35 @@ export interface WorkspacePosture {
   networkExists: boolean;
   /** Roster windows with no live pane. Empty when unscopable. */
   deadWindows: string[];
+  /** Agent versions inside the running container. Null skips the drift check. */
+  runningVersions?: Record<string, string> | null;
+}
+
+/**
+ * Warn for running agent binaries that drifted from their pinned versions
+ * (self-updaters move on their own). Unknown agents are ignored; the check
+ * is local-only and never touches the network.
+ */
+export function driftChecks(running: Record<string, string>): DoctorCheck[] {
+  const pinned = new Map<string, { name: string; version: string }>();
+  for (const entry of BUILTIN_CATALOG) {
+    if (!entry.pinnedVersion) continue;
+    pinned.set(entry.name, { name: entry.name, version: entry.pinnedVersion });
+    if (entry.npmPackage) pinned.set(entry.npmPackage, { name: entry.name, version: entry.pinnedVersion });
+  }
+  const checks: DoctorCheck[] = [];
+  for (const [key, version] of Object.entries(running)) {
+    const want = pinned.get(key);
+    if (!want || version === want.version) continue;
+    checks.push({
+      id: `agent-drift-${want.name}`,
+      group: 'Workspace',
+      status: 'warn',
+      summary: `${want.name} runs ${version} but the pinned version is ${want.version}`,
+      remediation: 'Run: sandbox workspace upgrade',
+    });
+  }
+  return checks;
 }
 
 export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck[] {
@@ -129,11 +160,13 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
       remediation: 'Run: sandbox workspace reopen',
     });
   }
+  if (posture.runningVersions) {
+    checks.push(...driftChecks(posture.runningVersions));
+  }
   return checks;
 }
 
-export function doctorExitCode(checks: DoctorCheck[]): 0 | 1 {
-  return checks.some((check) => check.status === 'fail') ? 1 : 0;
+export function doctorExitCode(checks: DoctorCheck[]): 0 | 1 {  return checks.some((check) => check.status === 'fail') ? 1 : 0;
 }
 
 export function renderDoctorText(checks: DoctorCheck[]): string {

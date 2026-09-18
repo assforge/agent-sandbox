@@ -24,7 +24,7 @@ import {
 } from '../docker.js';
 import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
 import { TERMINAL_ENGINES, type TerminalEngine } from '../engines/terminal.js';
-import { buildCandidate, activateImage, rollbackImage } from '../image.js';
+import { buildCandidate, activateImage, parseInspectedVersions, rollbackImage, INSPECT_VERSIONS_SCRIPT } from '../image.js';
 import { acquireLock } from '../lock.js';
 import { CONTAINER_WORKDIR, ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
 import { dryRunMigration } from '../migrate.js';
@@ -42,7 +42,7 @@ import {
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { migrateHomeDir, sandboxDir } from '../paths.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, credentialsHelp, imageHelp, runtimeHelp, terminalHelp, topHelp, workspaceHelp } from '../help.js';
+import { agentHelp, addHelp, credentialsHelp, describeAction, imageHelp, removeHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
   constructor(
@@ -123,14 +123,8 @@ function buildUpgradeCandidate(
         }
       },
       inspectBinaryVersions: (candidate) => {
-        const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'claude --version; opencode --version; codex --version; copilot --version']);
-        const versions: Record<string, string> = {};
-        const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-        if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
-        if (lines[1]) versions['opencode-ai'] = lines[1];
-        if (lines[2]) versions['@openai/codex'] = lines[2].replace(/^codex-cli /, '');
-        if (lines[3]) versions['@github/copilot'] = lines[3].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
-        return versions;
+        const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', INSPECT_VERSIONS_SCRIPT]);
+        return parseInspectedVersions(probed.stdout);
       },
       verifyCandidate: (candidate) => {
         const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'upgrade-verify', SANDBOX_CONFIG_FINGERPRINT: 'verify' }, ['sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
@@ -159,6 +153,21 @@ function dropMountFromEntry(entry: WorkspaceEntry, path: string): void {
     throw new CliError(`cannot drop the workspace root mount: ${entry.root}`, 2);
   }
   entry.mounts = entry.mounts.filter((mount) => normalizeLexical(mount) !== normalizeLexical(canonicalDrop));
+}
+
+/** Print group or per-action help for resource groups. True when handled. */
+function printGroupHelp(deps: MainDeps, group: string, action: string, help: boolean, groupHelp: () => string): boolean {
+  if (!action) {
+    deps.stdout(groupHelp());
+    return true;
+  }
+  if (help) {
+    const block = describeAction(group, action);
+    if (!block) throw new UsageError(`unknown ${group} action: ${action}`);
+    deps.stdout(block);
+    return true;
+  }
+  return false;
 }
 
 /** Resolve engine defs by name, failing with exit 1 on unknown agents. */
@@ -269,8 +278,10 @@ export function realDeps(assumeYes: boolean): MainDeps {
 }
 
 /** Single source of truth: the package manifest next to dist/. */
-function packageVersion(): string {
-  const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+/** Canonical package identity for self-update. Never derived from user input. */
+const SELF_PACKAGE = '@assforge/cogent-sandbox';
+
+function packageVersion(): string {  const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
   const parsed = JSON.parse(raw) as { version?: unknown };
   if (typeof parsed.version !== 'string') throw new Error('package.json has no version string');
   return parsed.version;
@@ -393,6 +404,12 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const deadWindows = current ? deadRosterWindows(deps, current) : [];
       const doctorRt = current ? selectRuntime(deps, current) : selectRuntime(deps);
       const doctorTerm = current ? selectTerminal(deps, current) : selectTerminal(deps);
+      let runningVersions: Record<string, string> | null = null;
+      if (current && doctorRt.containerState(deps.runner, current.container, current.id) === 'running') {
+        const spec = doctorRt.execVector(current.container, { workdir: CONTAINER_WORKDIR, argv: ['sh', '-c', INSPECT_VERSIONS_SCRIPT] });
+        const probed = deps.runner.run(spec.command, spec.args);
+        if (probed.status === 0) runningVersions = parseInspectedVersions(probed.stdout);
+      }
       const checks = runDoctor(
         {
           nodeVersion: deps.nodeVersion,
@@ -411,7 +428,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
             installHint: doctorTerm.installHint(deps.platform),
           },
         },
-        { image: current?.image ?? null, network: current ? current.network : null, networkExists, deadWindows },
+        { image: current?.image ?? null, network: current ? current.network : null, networkExists, deadWindows, runningVersions },
       );
       deps.stdout(parsed.json ? renderDoctorJson(checks) : renderDoctorText(checks));
       return doctorExitCode(checks);
@@ -490,8 +507,13 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return 0;
     }
     case 'workspace':
+      if (printGroupHelp(deps, 'workspace', parsed.action, parsed.help, workspaceHelp)) return 0;
       return workspaceCommand(deps, parsed.action, parsed.rest, parsed.workspace);
     case 'register': {
+      if (parsed.help) {
+        deps.stdout(addHelp());
+        return 0;
+      }
       const registry = loadRegistryOrThrow(deps);
       const raw = parsed.root ?? deps.cwd;
       if (!existsSync(raw)) {
@@ -504,23 +526,56 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       return 0;
     }
     case 'unregister': {
+      if (parsed.help) {
+        deps.stdout(removeHelp());
+        return 0;
+      }
       const registry = loadRegistryOrThrow(deps);
       const raw = parsed.root ?? deps.cwd;
       const root = defaultCanonicalize(raw);
       return unregisterWorkspace(deps, registry, root);
     }
     case 'agentAdmin':
+      if (printGroupHelp(deps, 'agent', parsed.action, parsed.help, agentHelp)) return 0;
       return agentCommand(deps, parsed.action, parsed.rest);
     case 'credentials':
+      if (printGroupHelp(deps, 'credentials', parsed.action, parsed.help, credentialsHelp)) return 0;
       return credentialsCommand(deps, parsed.action, parsed.rest, parsed.workspace);
     case 'runtime':
+      if (printGroupHelp(deps, 'runtime', parsed.action, parsed.help, runtimeHelp)) return 0;
       return runtimeCommand(deps, parsed.action, parsed.rest);
     case 'terminal':
-      return terminalCommand(deps, parsed.action, parsed.rest);
-    case 'terminal':
+      if (printGroupHelp(deps, 'terminal', parsed.action, parsed.help, terminalHelp)) return 0;
       return terminalCommand(deps, parsed.action, parsed.rest);
     case 'image':
+      if (printGroupHelp(deps, 'image', parsed.action, parsed.help, imageHelp)) return 0;
       return imageCommand(deps, parsed.action, parsed.rest, parsed.workspace);
+    case 'update': {
+      if (parsed.help) {
+        deps.stdout(updateHelp());
+        return 0;
+      }
+      const current = packageVersion();
+      const probed = deps.runner.run('npm', ['view', SELF_PACKAGE, 'version']);
+      if (probed.status !== 0) throw new CliError(`cannot check the latest ${SELF_PACKAGE} version`, 1);
+      const latest = probed.stdout.trim();
+      if (!latest) throw new CliError(`cannot check the latest ${SELF_PACKAGE} version`, 1);
+      if (parsed.check) {
+        deps.stdout(`current ${current}, latest ${latest}\n`);
+        return 0;
+      }
+      if (latest === current) {
+        deps.stdout(`sandbox ${current} is already current\n`);
+        return 0;
+      }
+      const installed = deps.runner.run('npm', ['install', '-g', `${SELF_PACKAGE}@${latest}`]);
+      if (installed.status !== 0) {
+        const detail = installed.stderr.trim() || installed.stdout.trim();
+        throw new CliError(`update to ${latest} failed${detail ? `: ${detail}` : ''}; check npm authentication for the package registry`, 1);
+      }
+      deps.stdout(`updated sandbox ${current} -> ${latest}; restart running workspaces to pick up template changes\n`);
+      return 0;
+    }
   }
 }
 
@@ -1264,14 +1319,8 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
             }
           },
           inspectBinaryVersions: (candidate) => {
-            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'claude --version; opencode --version; codex --version; copilot --version']);
-            const versions: Record<string, string> = {};
-            const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-            if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
-            if (lines[1]) versions['opencode-ai'] = lines[1];
-            if (lines[2]) versions['@openai/codex'] = lines[2].replace(/^codex-cli /, '');
-            if (lines[3]) versions['@github/copilot'] = lines[3].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
-            return versions;
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', INSPECT_VERSIONS_SCRIPT]);
+            return parseInspectedVersions(probed.stdout);
           },
           verifyCandidate: (candidate) => {
             const generation = `verify-${Date.now()}`;

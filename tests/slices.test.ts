@@ -13,7 +13,7 @@ import { acquireLock } from '../src/lock.js';
 import { assertWindowName } from '../src/terminal.js';
 import { dryRunMigration } from '../src/migrate.js';
 import { checkReadiness, configurationFingerprint, freshGeneration } from '../src/readiness.js';
-import { agentHelp, imageHelp, topHelp, workspaceHelp } from '../src/help.js';
+import { agentHelp, describeAction, imageHelp, topHelp, workspaceHelp } from '../src/help.js';
 
 describe('agents', () => {
   const engines = agentEngines();
@@ -321,21 +321,23 @@ describe('help', () => {
   it('documents every top-level command and resource action', () => {
     const top = topHelp();
     for (const token of [
-      'sandbox doctor',
-      'sandbox workspace list',
-      'sandbox workspace register',
-      'sandbox workspace migrate',
-      'sandbox agent upgrade',
-      'sandbox image activate',
-      'sandbox image rollback',
-      'sandbox --help',
-      'sandbox --version',
-      '-- <agent arguments',
+      'Usage: sandbox [OPTIONS] COMMAND',
+      'Commands:',
+      'Register a workspace root',
+      'Forget a workspace root',
+      'Upgrade this CLI in place',
+      'Manage workspace environments',
+      'sandbox COMMAND --help',
+      'Read-only diagnostics',
     ]) {
       expect(top).toContain(token);
     }
     expect(agentHelp()).toContain('claude, opencode');
     expect(workspaceHelp()).toContain('attach only reconnects');
     expect(imageHelp()).toContain('does not reverse a data migration');
+    expect(describeAction('workspace', 'restart')).toContain('Usage: sandbox workspace restart');
+    expect(describeAction('workspace', 'upgrade')).toContain('sandbox workspace upgrade [agent|all]');
+    expect(describeAction('image', 'activate')).toContain('Usage: sandbox image activate');
+    expect(describeAction('workspace', 'nope')).toBeNull();
   });
 });
