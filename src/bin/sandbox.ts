@@ -466,7 +466,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       } finally {
         handle.release();
       }
-      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTerminal);
+      if (!parsed.noAttach) reattachOrHint(deps, term, entry.session);
       return 0;
     }
     case 'agent': {
@@ -509,7 +509,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         handle.release();
       }
       deps.stdout(`${launched} window ${name} (${parsed.agent}) in session ${entry.session}\n`);
-      if (!parsed.noAttach) term.reattach(deps.runner, entry.session, deps.insideTerminal);
+      if (!parsed.noAttach) reattachOrHint(deps, term, entry.session);
       return 0;
     }
     case 'workspace':
@@ -591,6 +591,18 @@ function takeRestOption(rest: string[], names: string[]): string | undefined {
   const value = rest[index + 1];
   if (!value || value.startsWith('-')) throw new UsageError(`option ${rest[index]} requires a value`);
   return value;
+}
+
+/** Reattach, turning a terminal-less failure into an actionable message: the window itself is already ready. */
+export function reattachOrHint(deps: MainDeps, term: TerminalEngine, session: string): void {
+  try {
+    term.reattach(deps.runner, session, deps.insideTerminal);
+  } catch (error) {
+    throw new CliError(
+      `cannot attach to session ${session}: ${(error as Error).message}; the window is ready, attach from a terminal with: sandbox workspace attach`,
+      1,
+    );
+  }
 }
 
 /** Remove a workspace registration. Stops the container and kills the
@@ -800,8 +812,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       term.reattach(deps.runner, entry.session, deps.insideTerminal);
       return 0;
     }
-    case 'logs': {
-      const entry = await resolveAndEnsure(deps, registry, workspace);
+    case 'logs': {      const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
       const tail = takeRestOption(rest, ['--tail', '-t']) ?? '50';
       if (!/^\d+$/.test(tail)) throw new UsageError('workspace logs --tail must be a number');
@@ -847,7 +858,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       } finally {
         handle.release();
       }
-      if (!noAttach) term.reattach(deps.runner, entry.session, deps.insideTerminal);
+      if (!noAttach) reattachOrHint(deps, term, entry.session);
       return 0;
     }
     case 'exec': {

@@ -12,17 +12,9 @@ release. Processes inside one container share a user and can read one
 another's files; the isolation boundary is the container, not the
 window.
 
-Short flags (destructive and rare operations keep long-only flags
-on purpose):
-  -w  workspace
-  -n  name
-  -i  instance
-  -f  file
-  -t  tail
-  -o  output
-  -r  root
-  -j  json
-  -y  yes`;
+Short flags are shown next to the option they abbreviate in each
+usage line; destructive and rare operations keep long-only flags
+on purpose.`;
 
 function agentNames(): string {
   return BUILTIN_CATALOG.map((entry) => entry.name).join(', ');
