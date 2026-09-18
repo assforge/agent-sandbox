@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { redactedConfig } from './config.js';
-import type { Registry, WorkspaceEntry } from './registry.js';
+import type { InstanceEntry, Registry, WorkspaceEntry } from './registry.js';
 
 export interface BackupRunner {
   /** Copy a path out of the running container to a host directory. */
@@ -59,6 +59,34 @@ function requiredRoot(record: Record<string, unknown>, key: string): string {
 }
 
 /**
+ * Roster comes back with home modes intact; windows themselves are gone
+ * and return through reopen. Unknown shapes fail closed like the rest.
+ */
+function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
+  const raw = record['instances'];
+  if (!Array.isArray(raw)) return [];
+  const instances: InstanceEntry[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) {
+      throw new Error('backup workspace.json has an invalid instance');
+    }
+    const fields = item as Record<string, unknown>;
+    const name = fields['name'];
+    const kind = fields['kind'];
+    const window = fields['window'];
+    if (typeof name !== 'string' || typeof kind !== 'string' || typeof window !== 'string' || !name || !kind || !window) {
+      throw new Error('backup workspace.json has an invalid instance');
+    }
+    const homeMode = fields['homeMode'];
+    if (homeMode !== undefined && homeMode !== 'shared' && homeMode !== 'fork' && homeMode !== 'fresh') {
+      throw new Error('backup workspace.json has an invalid instance homeMode');
+    }
+    instances.push(homeMode === undefined ? { name, kind, window } : { name, kind, window, homeMode });
+  }
+  return instances;
+}
+
+/**
  * Restore a backup: reinstates the registry entry (recreating it when the
  * workspace was lost) and copies the home state back into the container.
  * The caller saves the registry under the workspace lock. The selected
@@ -78,6 +106,8 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
   const id = requiredName(record, 'id');
   const rawMounts = record['mounts'];
   const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
+  const rawForks = record['forks'];
+  const forks = Array.isArray(rawForks) && rawForks.every((fork): fork is string => typeof fork === 'string') ? rawForks : [];
   const entry: WorkspaceEntry = {
     id,
     root: requiredRoot(record, 'root'),
@@ -85,13 +115,13 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     image: typeof record['image'] === 'string' ? (record['image'] as string) : null,
     previousImage: typeof record['previousImage'] === 'string' ? (record['previousImage'] as string) : null,
     session: requiredName(record, 'session'),
-    instances: [],
+    instances: restoreInstances(record),
     homeVolume: requiredName(record, 'homeVolume'),
     network: record['network'] === 'restricted' ? 'restricted' : 'open',
     runtime: typeof record['runtime'] === 'string' && record['runtime'].length > 0 ? (record['runtime'] as string) : 'docker',
     terminal: typeof record['terminal'] === 'string' && record['terminal'].length > 0 ? (record['terminal'] as string) : 'tmux',
     mounts,
-    forks: [],
+    forks,
   };
   registry.workspaces[id] = entry;
   runner.copyToContainer(entry.container, join(outputDir, 'home'), '/home/agent');

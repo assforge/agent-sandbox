@@ -276,6 +276,8 @@ describe('locks and backups', () => {
       const registry = emptyRegistry();
       const entry = registerWorkspace(registry, '/w', []);
       entry.image = 'sha256:one';
+      entry.instances.push({ name: 'w1', kind: 'codex', window: 'w1', homeMode: 'fork' });
+      entry.forks.push('w1');
       const out = join(dir, 'backup');
       const receipt = backupWorkspace(runner, entry, out);
       expect(receipt).toMatchObject({ workspace: entry.id, copiedState: true });
@@ -285,6 +287,8 @@ describe('locks and backups', () => {
       expect(restored.id).toBe(entry.id);
       expect(restored.image).toBe('sha256:one');
       expect(restored.root).toBe('/w');
+      expect(restored.instances).toEqual([{ name: 'w1', kind: 'codex', window: 'w1', homeMode: 'fork' }]);
+      expect(restored.forks).toEqual(['w1']);
       expect(registry.workspaces[entry.id]).toBe(restored);
       expect(calls).toHaveLength(2);
       expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'))).toThrow(/missing or invalid/);

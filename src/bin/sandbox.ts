@@ -597,7 +597,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         const detail = installed.stderr.trim() || installed.stdout.trim();
         throw new CliError(`update to ${latest} failed${detail ? `: ${detail}` : ''}; check npm authentication for the package registry`, 1);
       }
-      deps.stdout(`updated sandbox ${current} -> ${latest}; restart running workspaces to pick up template changes\n`);
+      deps.stdout(`updated sandbox ${current} -> ${latest}; run sandbox workspace upgrade to rebuild images with the new CLI\n`);
       return 0;
     }
   }
@@ -1450,7 +1450,8 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       return 0;
     }
     case 'build': {
-      const rt = selectRuntime(deps);
+      const buildEntry = workspace ? lookupWorkspace(registry, defaultCanonicalize(workspace)) : null;
+      const rt = selectRuntime(deps, buildEntry ?? undefined);
       const contextDir = new URL('../../templates', import.meta.url).pathname;
       const tag = `sandbox-workspace:candidate-${Date.now()}`;
       const built = buildCandidate(
@@ -1468,12 +1469,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
           },
           verifyCandidate: (candidate) => {
             const generation = `verify-${Date.now()}`;
-            const probed = deps.runner.run('docker', [
-              'run', '--rm',
-              '-e', `SANDBOX_GENERATION=${generation}`,
-              '-e', 'SANDBOX_CONFIG_FINGERPRINT=verify',
-              candidate, 'sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh && cat /tmp/sandbox-ready/ready.json',
-            ]);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: generation, SANDBOX_CONFIG_FINGERPRINT: 'verify' }, ['sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh && cat /tmp/sandbox-ready/ready.json']);
             if (probed.status !== 0) return false;
             try {
               const ready = JSON.parse(probed.stdout) as { generation?: unknown };

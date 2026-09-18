@@ -43,3 +43,17 @@ outside the shared mount before executing project tests there:
 sandbox workspace exec -- npm ci --prefix /tmp/party
 sandbox workspace exec -- npm --prefix /tmp/party test
 ```
+
+## Docs
+
+- [docs/architecture.md](docs/architecture.md) — resource model, engine
+  seams, home model, image lifecycle, security boundaries.
+- [docs/flows.md](docs/flows.md) — step-by-step flows for launch,
+  restart, upgrade, update, migrate, backup, close, prune, and doctor.
+
+## Supported platforms
+
+Developed and verified on macOS with Docker Desktop and tmux. Linux
+hosts are expected to work but are not verified in CI. Windows is not
+supported. Containers are always Linux; the Apple Container runtime is
+capability-verified through live end-to-end runs on this machine.
