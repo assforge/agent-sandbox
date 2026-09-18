@@ -35,17 +35,17 @@ describe('parseArgs', () => {
     expect(parseArgs(['--no-attach'])).toMatchObject({ kind: 'bare', noAttach: true });
   });
 
-  it('parses the short add shortcut and retired register', () => {
-    expect(parseArgs(['add'])).toEqual({ kind: 'register', root: undefined, workspace: undefined, help: false });
-    expect(parseArgs(['add', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: undefined, help: false });
-    expect(parseArgs(['--workspace', '/w', 'add', '/w/repo'])).toEqual({ kind: 'register', root: '/w/repo', workspace: '/w', help: false });
-    expect(parseArgs(['forget'])).toEqual({ kind: 'unregister', root: undefined, workspace: undefined, help: false });
-    expect(parseArgs(['forget', '/w/repo'])).toEqual({ kind: 'unregister', root: '/w/repo', workspace: undefined, help: false });
-    expect(parseArgs(['add', '--help'])).toMatchObject({ kind: 'register', help: true });
-    expect(canonicalAction('workspace', 'register')).toBe('add');
-    expect(canonicalAction('workspace', 'unregister')).toBe('forget');
+  it('parses the short link shortcut and retired register', () => {
+    expect(parseArgs(['link'])).toEqual({ kind: 'link', root: undefined, workspace: undefined, help: false });
+    expect(parseArgs(['link', '/w/repo'])).toEqual({ kind: 'link', root: '/w/repo', workspace: undefined, help: false });
+    expect(parseArgs(['--workspace', '/w', 'link', '/w/repo'])).toEqual({ kind: 'link', root: '/w/repo', workspace: '/w', help: false });
+    expect(parseArgs(['unlink'])).toEqual({ kind: 'unlink', root: undefined, workspace: undefined, help: false });
+    expect(parseArgs(['unlink', '/w/repo'])).toEqual({ kind: 'unlink', root: '/w/repo', workspace: undefined, help: false });
+    expect(parseArgs(['link', '--help'])).toMatchObject({ kind: 'link', help: true });
+    expect(canonicalAction('workspace', 'register')).toBe('link');
+    expect(canonicalAction('workspace', 'unregister')).toBe('unlink');
     expect(canonicalAction('workspace', 'start')).toBe('start');
-    for (const argv of [['add', 'a', 'b'], ['add', '--json'], ['forget', 'a', 'b'], ['register'], ['unregister'], ['rm']]) {
+    for (const argv of [['link', 'a', 'b'], ['link', '--json'], ['unlink', 'a', 'b'], ['register'], ['unregister'], ['rm'], ['add'], ['forget']]) {
       try {
         parseArgs(argv);
         expect.unreachable();

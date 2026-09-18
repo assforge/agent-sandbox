@@ -323,8 +323,8 @@ describe('help', () => {
     for (const token of [
       'Usage: sandbox [OPTIONS] COMMAND',
       'Commands:',
-      'Register a workspace root',
-      'Forget a workspace root',
+      'Link a workspace root',
+      'Unlink a workspace root, keep all data',
       'Upgrade this CLI in place',
       'Manage workspace environments',
       'sandbox COMMAND --help',
@@ -337,7 +337,7 @@ describe('help', () => {
     expect(imageHelp()).toContain('does not reverse a data migration');
     expect(describeAction('workspace', 'restart')).toContain('Usage: sandbox workspace restart');
     expect(describeAction('workspace', 'upgrade')).toContain('sandbox workspace upgrade [agent|all]');
-    expect(describeAction('workspace', 'register')).toContain('Usage: sandbox workspace add');
+    expect(describeAction('workspace', 'register')).toContain('Usage: sandbox workspace link');
     expect(describeAction('workspace', 'prune')).toContain('Usage: sandbox workspace prune');
     expect(describeAction('image', 'activate')).toContain('Usage: sandbox image activate');
     expect(describeAction('workspace', 'nope')).toBeNull();

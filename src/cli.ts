@@ -6,8 +6,8 @@ export type ParsedCommand =
   | { kind: 'shell'; name?: string; workspace?: string; noAttach?: boolean }
   | { kind: 'doctor'; json: boolean; workspace?: string }
   | { kind: 'workspace'; action: string; rest: string[]; workspace?: string; help: boolean }
-  | { kind: 'register'; root?: string; workspace?: string; help: boolean }
-  | { kind: 'unregister'; root?: string; workspace?: string; help: boolean }
+  | { kind: 'link'; root?: string; workspace?: string; help: boolean }
+  | { kind: 'unlink'; root?: string; workspace?: string; help: boolean }
   | { kind: 'agentAdmin'; action: string; rest: string[]; workspace?: string; help: boolean }
   | { kind: 'credentials'; action: string; rest: string[]; workspace?: string; help: boolean }
   | { kind: 'runtime'; action: string; rest: string[]; help: boolean }
@@ -19,8 +19,8 @@ export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as co
 
 /** Long-standing action aliases resolve to their canonical short form. */
 export function canonicalAction(group: string, action: string): string {
-  if (group === 'workspace' && action === 'register') return 'add';
-  if (group === 'workspace' && action === 'unregister') return 'forget';
+  if (group === 'workspace' && action === 'register') return 'link';
+  if (group === 'workspace' && action === 'unregister') return 'unlink';
   return action;
 }
 
@@ -73,14 +73,14 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (first === 'terminal') return { kind: 'terminal', action, rest: tail, help };
     return { kind: 'agentAdmin', action, rest: tail, workspace, help };
   }
-  if (first === 'add' || first === 'forget') {
+  if (first === 'link' || first === 'unlink') {
     const help = takeFlag(rest, ['--help', '-h']);
     if (rest.length > 1) throw new UsageError(`sandbox ${first} takes at most one path`);
     const root = rest[0];
     if (root !== undefined && root.startsWith('-')) throw new UsageError(`unexpected option: ${root}`);
     if (forwarded.length > 0) throw new UsageError(`sandbox ${first} does not forward arguments`);
-    if (first === 'add') return { kind: 'register', root, workspace, help };
-    return { kind: 'unregister', root, workspace, help };
+    if (first === 'link') return { kind: 'link', root, workspace, help };
+    return { kind: 'unlink', root, workspace, help };
   }
   if (first === 'update') {
     const help = takeFlag(rest, ['--help', '-h']);

@@ -12,9 +12,17 @@ release. Processes inside one container share a user and can read one
 another's files; the isolation boundary is the container, not the
 window.
 
-Short flags: -w workspace, -n name, -i instance, -f file, -t tail,
--o output, -r root, -j json, -y yes. Destructive and rare operations
-keep long-only flags on purpose.`;
+Short flags (destructive and rare operations keep long-only flags
+on purpose):
+  -w  workspace
+  -n  name
+  -i  instance
+  -f  file
+  -t  tail
+  -o  output
+  -r  root
+  -j  json
+  -y  yes`;
 
 function agentNames(): string {
   return BUILTIN_CATALOG.map((entry) => entry.name).join(', ');
@@ -37,8 +45,8 @@ Options:
 Commands:
   agent        Open agent windows (claude, opencode, codex, copilot)
   shell        Open a shell window in this workspace
-  add          Register a workspace root (short for workspace add)
-  forget       Forget a workspace root, keep all data
+  link         Link a workspace root into management
+  unlink       Unlink a workspace root, keep all data
   workspace    Manage workspace environments
   image        Build, activate, and roll back workspace images
   credentials  Manage per-instance secrets on the host
@@ -78,8 +86,8 @@ export function workspaceHelp(): string {
 Commands:
   list         List registered workspaces
   status       Show container, session, and instance state
-  add          Register a workspace root (register is an alias)
-  forget       Forget a workspace root, keep all data (unregister is an alias)
+  link         Link a workspace root (register is an alias)
+  unlink       Unlink a workspace root, keep all data (unregister is an alias)
   start        Prepare the environment without attaching
   stop         Stop the container, keep volumes
   restart      Stop and bring the same image back
@@ -182,20 +190,21 @@ ${SHARED_HELP}
 `;
 }
 
-export function addHelp(): string {
-  return `Usage: sandbox add [path]
+export function linkHelp(): string {
+  return `Usage: sandbox link [path]
 
-Register a workspace root. Defaults to the current directory.
-Long form: sandbox workspace register --root <path>.
+Link a workspace root into sandbox management. Defaults to the current
+directory. Long form: sandbox workspace link --root <path>.
 `;
 }
 
-export function forgetHelp(): string {
-  return `Usage: sandbox forget [path]
+export function unlinkHelp(): string {
+  return `Usage: sandbox unlink [path]
 
-Forget a workspace root after confirmation when anything is live.
-Volumes, networks, images, and credentials are always kept.
-Long form: sandbox workspace forget.
+Unlink a workspace root after confirmation when anything is live.
+Volumes, networks, images, and credentials are always kept, exactly
+like unlinking a name without deleting its content.
+Long form: sandbox workspace unlink.
 `;
 }
 
@@ -212,8 +221,8 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
   workspace: {
     list: 'Usage: sandbox workspace list [--json, -j]\n\nList registered workspaces.\n',
     status: 'Usage: sandbox workspace status [--json, -j]\n\nShow container, session, and instance state.\n',
-    add: 'Usage: sandbox workspace add --root, -r <path>\n\nRegister a workspace root. Short form: sandbox add [path]. register is an accepted alias.\n',
-    forget: 'Usage: sandbox workspace forget\n\nForget the workspace after confirmation when anything is live. Volumes, networks, images, and credentials are always kept. Short form: sandbox forget [path]. unregister is an accepted alias.\n',
+    link: 'Usage: sandbox workspace link --root, -r <path>\n\nLink a workspace root into management. Short form: sandbox link [path]. register is an accepted alias.\n',
+    unlink: 'Usage: sandbox workspace unlink\n\nUnlink the workspace after confirmation when anything is live. Volumes, networks, images, and credentials are always kept. Short form: sandbox unlink [path]. unregister is an accepted alias.\n',
     start: 'Usage: sandbox workspace start\n\nPrepare the environment without attaching.\n',
     stop: 'Usage: sandbox workspace stop\n\nAsk for confirmation when instances are live. Keeps volumes.\n',
     restart: 'Usage: sandbox workspace restart\n\nStop and bring the same image back. Asks for confirmation when instances are live.\n',
