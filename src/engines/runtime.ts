@@ -52,6 +52,11 @@ export interface ImageBuildRequest {
   buildArgs: Record<string, string>;
 }
 
+/** Extra mounts for one-shot helpers that operate on volumes, not the workspace container. */
+export interface OneShotOptions {
+  mounts?: { source: string; target: string }[];
+}
+
 export interface RuntimeEngine {
   readonly name: string;
   /** False until a full live lifecycle has verified the mapping. Surfaced by doctor. */
@@ -88,7 +93,7 @@ export interface RuntimeEngine {
   networkExists: (runner: CommandRunner, network: string) => boolean;
   copyVolume: (runner: CommandRunner, source: string, destination: string, workspaceId: string) => void;
   buildImage: (runner: CommandRunner, request: ImageBuildRequest) => string;
-  runOneShot: (runner: CommandRunner, image: string, env: Record<string, string>, argv: string[]) => RunResult;
+  runOneShot: (runner: CommandRunner, image: string, env: Record<string, string>, argv: string[], options?: OneShotOptions) => RunResult;
   copyFromContainer: (runner: CommandRunner, container: string, containerPath: string, hostDir: string) => void;
   copyToContainer: (runner: CommandRunner, container: string, hostDir: string, containerPath: string) => void;
   containerLogs: (runner: CommandRunner, container: string, tail: string) => RunResult;
@@ -176,9 +181,10 @@ export const DockerRuntimeEngine: RuntimeEngine = {
     }
     return request.tag;
   },
-  runOneShot: (runner, image, env, argv) => {
+  runOneShot: (runner, image, env, argv, options) => {
     const args = ['run', '--rm'];
     for (const [key, value] of Object.entries(env)) args.push('-e', `${key}=${value}`);
+    for (const mount of options?.mounts ?? []) args.push('-v', `${mount.source}:${mount.target}`);
     args.push(image, ...argv);
     return runner.run('docker', args);
   },
