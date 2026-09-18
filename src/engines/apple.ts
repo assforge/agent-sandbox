@@ -206,10 +206,19 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
       '--entrypoint', 'sh', options.image, '-c', 'chown -R agent:agent /home/agent',
     ]);
     if (owned.status !== 0) fail(`apple runtime: cannot prepare home volume: ${errorOf(owned)}`);
+    // Same-path bind like docker: host and container share the workspace
+    // path. The Apple builder may not create deep targets, so ensure the
+    // mount point exists first with the same privileged one-shot pattern
+    // as the home-volume repair above.
+    const prepared = runner.run('container', [
+      'run', '--rm', '--user', 'root',
+      '--entrypoint', 'sh', options.image, '-c', `mkdir -p '${entry.root}'`,
+    ]);
+    if (prepared.status !== 0) fail(`apple runtime: cannot prepare workspace mount: ${errorOf(prepared)}`);
     const args = [
       'run', '-d', '--cap-drop', 'ALL', '--network', options.network, '--name', entry.container,
       '--label', 'sandbox.managed=true', '--label', `sandbox.workspace=${entry.id}`, '--label', 'sandbox.runtime=apple',
-      '--mount', `type=bind,source=${entry.root},target=${options.workdir}`,
+      '--mount', `type=bind,source=${entry.root},target=${entry.root}`,
       '--mount', `type=volume,source=${options.homeVolume},target=/home/agent`,
     ];
     for (const mount of options.mounts) {

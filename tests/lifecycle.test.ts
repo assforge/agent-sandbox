@@ -449,6 +449,12 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'restart'], counting)).toBe(0);
       expect(confirms).toBe(1);
       expect(out.join('')).toContain('restarted');
+      const created = world.calls.find((call) => call[0] === 'docker' && call[1] === 'run' && call[2] === '-d');
+      const volumes = (created ?? []).filter((arg, index) => (created as string[])[index - 1] === '-v');
+      expect(volumes.some((volume) => {
+        const [source, target] = String(volume).split(':');
+        return source === target && (source ?? '').includes('sandbox-root-');
+      })).toBe(true);
       const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       expect(world.containers.get(`sandbox-${id}`)?.running).toBe(true);

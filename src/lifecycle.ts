@@ -5,7 +5,6 @@ import { requireCapabilities, sameImageId } from './engines/runtime.js';
 import type { RuntimeEngine } from './engines/runtime.js';
 import type { WorkspaceEntry } from './registry.js';
 
-export const CONTAINER_WORKDIR = '/home/agent/work';
 export const INSTANCE_HOME_BASE = '/home/agent/instances';
 
 /** Per-instance HOME directory inside the container. */
@@ -15,7 +14,7 @@ export function instanceHome(instance: string): string {
 
 /** Create the instance HOME before launch so agents land in owned state. */
 export function ensureInstanceHome(runner: CommandRunner, runtime: RuntimeEngine, container: string, instance: string): void {
-  const spec = runtime.execVector(container, { workdir: CONTAINER_WORKDIR, argv: ['mkdir', '-p', instanceHome(instance)], user: 'agent', tty: false });
+  const spec = runtime.execVector(container, { workdir: '/home/agent', argv: ['mkdir', '-p', instanceHome(instance)], user: 'agent', tty: false });
   const created = runner.run(spec.command, spec.args);
   if (created.status !== 0) {
     throw new Error(`cannot prepare instance home for ${instance}: ${created.stderr.trim()}`);
@@ -91,7 +90,6 @@ export function ensureReady(
   if (state === 'absent') {
     runtime.createContainer(runner, entry, {
       image: options.image,
-      workdir: CONTAINER_WORKDIR,
       mounts: entry.mounts.length > 0 ? entry.mounts : [entry.root],
       homeVolume: entry.homeVolume,
       network,
