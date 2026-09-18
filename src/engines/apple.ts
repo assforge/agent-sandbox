@@ -385,9 +385,10 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     return request.tag;
   },
 
-  runOneShot(runner, image, env, argv) {
+  runOneShot(runner, image, env, argv, options) {
     const args = ['run', '--rm'];
     for (const [key, value] of Object.entries(env)) args.push('-e', `${key}=${value}`);
+    for (const mount of options?.mounts ?? []) args.push('--mount', `type=volume,source=${mount.source},target=${mount.target}`);
     args.push(image, ...argv);
     return runner.run('container', args);
   },

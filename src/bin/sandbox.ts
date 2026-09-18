@@ -646,11 +646,14 @@ async function pruneForks(deps: MainDeps, registry: Registry, targets: Workspace
   for (const item of victims) {
     const handle = acquireLock(deps.lockDir, item.entry.id);
     try {
+      // The home volume rides along at /v: without it the one-shot would
+      // prune an ephemeral container filesystem and report success.
       const probed = item.rt.runOneShot(
         deps.runner,
         requireImage(item.entry),
         { SANDBOX_GENERATION: 'prune', SANDBOX_CONFIG_FINGERPRINT: 'prune' },
-        ['sh', '-c', `rm -rf '/home/agent/instances/${item.fork}'`],
+        ['sh', '-c', `rm -rf '/v/instances/${item.fork}'`],
+        { mounts: [{ source: item.entry.homeVolume, target: '/v' }] },
       );
       if (probed.status !== 0) throw new CliError(`cannot prune fork ${item.fork}`, 1);
       item.entry.forks = item.entry.forks.filter((fork) => fork !== item.fork);

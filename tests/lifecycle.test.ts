@@ -732,6 +732,8 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'prune', '--forks', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('pruned forks');
       expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.forks).toEqual([]);
+      const rmCall = world.calls.find((call) => call.some((arg) => typeof arg === 'string' && arg.includes('rm -rf')));
+      expect(rmCall).toContain(`sandbox-home-${id}:/v`);
       expect(await main(['workspace', 'prune', '--forks', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('no orphan fork state');
     } finally {
