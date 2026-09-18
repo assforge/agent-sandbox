@@ -288,7 +288,20 @@ function loadRegistryOrThrow(deps: MainDeps): Registry {
   }
 }
 
+/** Filesystem pre-check so the git probe below never runs (and never
+ * leaks its fatal to stderr) outside a repository. */
+export function hasGitDir(cwd: string): boolean {
+  let dir = cwd;
+  for (;;) {
+    if (existsSync(join(dir, '.git'))) return true;
+    const parent = join(dir, '..');
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
 function detectGitRoot(deps: MainDeps): string | null {
+  if (!hasGitDir(deps.cwd)) return null;
   const probed = deps.runner.run('git', ['-C', deps.cwd, 'rev-parse', '--show-toplevel']);
   if (probed.status !== 0) return null;
   const root = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean)[0];
