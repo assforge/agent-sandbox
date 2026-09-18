@@ -170,6 +170,14 @@ function printGroupHelp(deps: MainDeps, group: string, action: string, help: boo
   return false;
 }
 
+/** Read agent versions from a running container. Null when it cannot be done. No tty: version output needs none, and -t fails without a terminal. */
+export function inspectRunningVersions(deps: MainDeps, rt: RuntimeEngine, container: string): Record<string, string> | null {
+  const spec = rt.execVector(container, { workdir: CONTAINER_WORKDIR, argv: ['sh', '-c', INSPECT_VERSIONS_SCRIPT], tty: false });
+  const probed = deps.runner.run(spec.command, spec.args);
+  if (probed.status !== 0) return null;
+  return parseInspectedVersions(probed.stdout);
+}
+
 /** Resolve engine defs by name, failing with exit 1 on unknown agents. */
 function resolveAgentDefs(agents: Map<string, AgentEngine>, names: string[]): AgentEngine[] {
   return names.map((name) => {
@@ -406,9 +414,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const doctorTerm = current ? selectTerminal(deps, current) : selectTerminal(deps);
       let runningVersions: Record<string, string> | null = null;
       if (current && doctorRt.containerState(deps.runner, current.container, current.id) === 'running') {
-        const spec = doctorRt.execVector(current.container, { workdir: CONTAINER_WORKDIR, argv: ['sh', '-c', INSPECT_VERSIONS_SCRIPT] });
-        const probed = deps.runner.run(spec.command, spec.args);
-        if (probed.status === 0) runningVersions = parseInspectedVersions(probed.stdout);
+        runningVersions = inspectRunningVersions(deps, doctorRt, current.container);
       }
       const checks = runDoctor(
         {

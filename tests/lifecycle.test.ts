@@ -499,6 +499,8 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('agent-drift-codex');
       expect(out.join('')).toContain('sandbox workspace upgrade');
+      const probe = world.calls.find((call) => call.some((arg) => typeof arg === 'string' && arg.includes('claude --version')));
+      expect(probe).not.toContain('-t');
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
