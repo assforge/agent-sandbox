@@ -60,7 +60,6 @@ export function ensureVolume(runner: CommandRunner, volume: string, workspaceIdV
 
 export interface CreateOptions {
   image: string;
-  workdir: string;
   mounts: string[];
   homeVolume: string;
   network: string;
@@ -136,7 +135,9 @@ export function createContainer(runner: CommandRunner, entry: { id: string; cont
   const args = [
     'run', '-d', '--pull', 'never', '--cap-drop', 'ALL', '--network', options.network, '--name', entry.container,
     '--label', MANAGED_LABEL, '--label', workspaceLabel(entry.id), '--label', `sandbox.runtime=${options.runtimeName}`,
-    '-v', `${entry.root}:${options.workdir}:rw`,
+    // Same-path bind: host and container share the workspace path, so
+    // absolute paths, editor links, and cwd-keyed agent state survive.
+    '-v', `${entry.root}:${entry.root}:rw`,
     '-v', `${options.homeVolume}:/home/agent`,
     '-e', `SANDBOX_GENERATION=${options.generation}`,
     '-e', `SANDBOX_CONFIG_FINGERPRINT=${options.fingerprint}`,

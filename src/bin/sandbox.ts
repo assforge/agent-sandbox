@@ -26,7 +26,7 @@ import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
 import { TERMINAL_ENGINES, type TerminalEngine } from '../engines/terminal.js';
 import { buildCandidate, activateImage, parseInspectedVersions, rollbackImage, INSPECT_VERSIONS_SCRIPT } from '../image.js';
 import { acquireLock } from '../lock.js';
-import { CONTAINER_WORKDIR, ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
+import { ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
 import { dryRunMigration } from '../migrate.js';
 import { loadHostConfig, saveHostConfig } from '../hostconfig.js';
 import {
@@ -171,8 +171,8 @@ function printGroupHelp(deps: MainDeps, group: string, action: string, help: boo
 }
 
 /** Read agent versions from a running container. Null when it cannot be done. No tty: version output needs none, and -t fails without a terminal. */
-export function inspectRunningVersions(deps: MainDeps, rt: RuntimeEngine, container: string): Record<string, string> | null {
-  const spec = rt.execVector(container, { workdir: CONTAINER_WORKDIR, argv: ['sh', '-c', INSPECT_VERSIONS_SCRIPT], tty: false });
+export function inspectRunningVersions(deps: MainDeps, rt: RuntimeEngine, container: string, workdir: string): Record<string, string> | null {
+  const spec = rt.execVector(container, { workdir, argv: ['sh', '-c', INSPECT_VERSIONS_SCRIPT], tty: false });
   const probed = deps.runner.run(spec.command, spec.args);
   if (probed.status !== 0) return null;
   return parseInspectedVersions(probed.stdout);
@@ -414,7 +414,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const doctorTerm = current ? selectTerminal(deps, current) : selectTerminal(deps);
       let runningVersions: Record<string, string> | null = null;
       if (current && doctorRt.containerState(deps.runner, current.container, current.id) === 'running') {
-        runningVersions = inspectRunningVersions(deps, doctorRt, current.container);
+        runningVersions = inspectRunningVersions(deps, doctorRt, current.container, current.root);
       }
       const checks = runDoctor(
         {
@@ -462,7 +462,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         }
         const launchEnv = launchEnvFor(deps, entry, name);
         ensureInstanceHome(deps.runner, rt, entry.container, name);
-        term.openAgentWindow(deps.runner, entry.session, name, rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: ['bash'], env: launchEnv }), entry.root);
+        term.openAgentWindow(deps.runner, entry.session, name, rt.execVector(entry.container, { workdir: entry.root, argv: ['bash'], env: launchEnv }), entry.root);
       } finally {
         handle.release();
       }
@@ -502,7 +502,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           deps.runner,
           entry.session,
           name,
-          rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: [...def.launch, ...parsed.forwarded], env: launchEnv }),
+          rt.execVector(entry.container, { workdir: entry.root, argv: [...def.launch, ...parsed.forwarded], env: launchEnv }),
           entry.root,
         );
       } finally {
@@ -834,7 +834,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (entry.instances.length === 0) {
-          term.openAgentWindow(deps.runner, entry.session, 'shell', rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: ['bash'], env: launchEnvFor(deps, entry, 'shell') }), entry.root);
+          term.openAgentWindow(deps.runner, entry.session, 'shell', rt.execVector(entry.container, { workdir: entry.root, argv: ['bash'], env: launchEnvFor(deps, entry, 'shell') }), entry.root);
           deps.stdout('reopened shell window (no instances registered)\n');
         }
         const agents = agentRegistry(deps);
@@ -850,7 +850,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
               continue;
             }
           }
-          const launch = rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: launchArgv, env: launchEnvFor(deps, entry, instance.name) });
+          const launch = rt.execVector(entry.container, { workdir: entry.root, argv: launchArgv, env: launchEnvFor(deps, entry, instance.name) });
           ensureInstanceHome(deps.runner, rt, entry.container, instance.name);
           const outcome = term.openAgentWindow(deps.runner, entry.session, instance.window, launch, entry.root);
           deps.stdout(`${outcome} window ${instance.name} (${instance.kind})\n`);
@@ -870,7 +870,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
-        const spec = rt.execVector(entry.container, { workdir: CONTAINER_WORKDIR, argv: command, tty: deps.stdinIsTTY });
+        const spec = rt.execVector(entry.container, { workdir: entry.root, argv: command, tty: deps.stdinIsTTY });
         const result = deps.runner.run(spec.command, spec.args);
         if (result.stdout) deps.stdout(result.stdout);
         if (result.stderr) deps.stderr(result.stderr);
