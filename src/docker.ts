@@ -82,13 +82,14 @@ export function ensureNetwork(runner: CommandRunner, network: string, workspaceI
   const exists = listed.status === 0 && listed.stdout.split('\n').map((line) => line.trim()).includes(network);
   if (exists) {
     if (networkInternal(runner, network) === restricted) return;
-    const attached = runner.run('docker', ['network', 'inspect', '--format', '{{len .Containers}}', network]);
-    if (attached.status === 0 && attached.stdout.trim() !== '0' && attached.stdout.trim() !== '<no value>') {
-      throw new Error(`network ${network} is attached; stop the workspace before switching policy`);
-    }
+    // The internal flag is create-time immutable. The caller removes
+    // attached containers first; a refused removal means something else
+    // still holds the network.
     const removed = runner.run('docker', ['network', 'rm', network]);
     if (removed.status !== 0) {
-      throw new Error(`cannot recreate network ${network}: ${removed.stderr.trim()}`);
+      throw new Error(
+        `network ${network} has the wrong policy and is still attached; stop its containers, then retry`,
+      );
     }
   }
   const args = ['network', 'create', '--label', MANAGED_LABEL, '--label', workspaceLabel(workspaceIdValue)];

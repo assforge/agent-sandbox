@@ -660,3 +660,28 @@ describe('workspace lifecycle flows', () => {
     }
   });
 });
+
+describe('startup failure', () => {
+  it('fails fast when the container exits instead of spamming probes', async () => {
+    const { DockerRuntimeEngine } = await import('../src/engines/runtime.js');
+    const { ensureReady } = await import('../src/lifecycle.js');
+    const calls: string[][] = [];
+    const runner = {
+      run: (command: string, args: string[]) => {
+        calls.push([command, ...args]);
+        if (args.includes('cat')) return { status: 1, stdout: '', stderr: 'not running' };
+        if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+        if (args[0] === 'inspect') return { status: 0, stdout: 'false|true|w-1', stderr: '' };
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    };
+    const registry = emptyRegistry();
+    const entry = registerWorkspace(registry, '/w', ['/w']);
+    entry.image = 'img:tag';
+    expect(() => ensureReady(runner, DockerRuntimeEngine, entry, { image: 'img:tag', probes: 30, probeIntervalMs: 1 })).toThrow(
+      /exited during startup/,
+    );
+    const execProbes = calls.filter((call) => call.includes('cat')).length;
+    expect(execProbes).toBeLessThan(30);
+  });
+});

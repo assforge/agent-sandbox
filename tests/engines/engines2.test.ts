@@ -104,9 +104,17 @@ describe('apple engine vectors', () => {  it('builds container-shaped argv from 
     });
     expect(() => AppleContainerRuntimeEngine.containerState(broken.runner, 'sandbox-w', 'w')).toThrow(/cannot parse/);
     const nonet = fakeRunner({
-      'container network': { status: 0, stdout: '{"name":"n"}', stderr: '' },
+      'container network': { status: 0, stdout: '{"mode":"bridged"}', stderr: '' },
     });
-    expect(() => AppleContainerRuntimeEngine.networkInternal(nonet.runner, 'n')).toThrow(/unverified output shape/);
+    expect(() => AppleContainerRuntimeEngine.networkInternal(nonet.runner, 'n')).toThrow(/unknown network mode/);
+    const nat = fakeRunner({
+      'container network': { status: 0, stdout: '{"configuration":{"mode":"nat"}}', stderr: '' },
+    });
+    expect(AppleContainerRuntimeEngine.networkInternal(nat.runner, 'n')).toBe(false);
+    const hostOnly = fakeRunner({
+      'container network': { status: 0, stdout: '{"configuration":{"mode" : "hostOnly"}}', stderr: '' },
+    });
+    expect(AppleContainerRuntimeEngine.networkInternal(hostOnly.runner, 'n')).toBe(true);
   });
 });
 
@@ -199,5 +207,49 @@ describe('apple engine operations', () => {
     const spec = AppleContainerRuntimeEngine.execVector('c', { workdir: '/w', argv: ['ls'] });
     expect(spec.command).toBe('container');
     expect(spec.args).toContain('-t');
+  });
+});
+
+describe('apple volume ownership', () => {
+  it('hands the home tree to the agent user before unprivileged startup', async () => {
+    const { AppleContainerRuntimeEngine: Apple } = await import('../../src/engines/apple.js');
+    const calls: string[][] = [];
+    const runner = {
+      run: (command: string, args: string[]) => {
+        calls.push([command, ...args]);
+        if (args.includes('chown')) return { status: 0, stdout: '', stderr: '' };
+        if (args[0] === 'volume' && args[1] === 'ls') return { status: 0, stdout: '', stderr: '' };
+        if (args[0] === 'image' && args[1] === 'list') {
+          return { status: 0, stdout: JSON.stringify([{ name: 'img:tag' }]), stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    };
+    Apple.createContainer(runner, { id: 'w', container: 'sandbox-w', root: '/w' }, {
+      image: 'img:tag', workdir: '/work', mounts: ['/w'], homeVolume: 'vol-1',
+      network: 'net-1', runtimeName: 'apple', generation: 'g', fingerprint: 'f',
+    });
+    const bootstrap = calls.find((call) => call.some((part) => part.includes('chown')));
+    expect(bootstrap).toBeDefined();
+    expect(bootstrap as string[]).toContain('--user');
+    expect(bootstrap as string[]).toContain('root');
+  });
+});
+
+describe('apple resource names', () => {
+  it('prefers structural names over label-value shadows', async () => {
+    const { AppleContainerRuntimeEngine: Apple } = await import('../../src/engines/apple.js');
+    const runner = {
+      run: (command: string, args: string[]) => {
+        void command;
+        void args;
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ configuration: { name: 'sandbox-home-w', labels: { 'sandbox.workspace': 'sandbox-w' } } }]),
+          stderr: '',
+        };
+      },
+    };
+    expect(Apple.listVolumes(runner)).toEqual(['sandbox-home-w']);
   });
 });

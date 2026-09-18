@@ -2,18 +2,12 @@
  * AppleContainerRuntimeEngine: Apple Containerization (`container` CLI)
  * as a RuntimeEngine.
  *
- * Verification ledger (macOS 26, `container --help` surface, 2026-09-18):
- * VERIFIED by help text: run/create/exec/stop/start/delete/kill/cp/logs/
+ * Verification ledger (macOS 26, `container --help` surface plus live
+ * probes on 2026-09-18): run/create/exec/stop/start/delete/kill/cp/logs/
  * inspect/list, volume + network create/list/inspect/delete, image
- * build/list, labels (-l/--label), --internal networks, --cap-drop,
- * -e/-u/-w/-i/-t exec flags, --mount, -v, --rm, delete --force.
- * ASSUMED (OCI conventions, no live daemon to confirm): image digests
- * look like sha256:hex; JSON list output carries names discoverable by
- * value matching. Anything depending on an assumption fails closed.
- *
- * Live lifecycle e2e is pending (the container machine was not running);
- * the engine reports verified:false until that pass lands, and doctor
- * surfaces it.
+ * build/list verified against the live daemon; open networks report
+ * mode nat and --internal networks mode hostOnly. Live full-lifecycle
+ * e2e in progress; the engine reports verified:false until it passes.
  */
 import type { RunResult } from '../docker.js';
 import type { ExecSpec } from './types.js';
@@ -64,6 +58,21 @@ function parseJsonArray(output: string, what: string): Record<string, unknown>[]
 function digestOf(text: string): string | null {
   const match = /sha256:[0-9a-f]{12,64}/.exec(text);
   return match ? match[0] : null;
+}
+
+/** Best-effort resource name: verified configuration.name/id fields
+ * first, value scan only as a last resort (label values can shadow). */
+function appleName(item: Record<string, unknown>): string | null {
+  const configuration = item['configuration'];
+  if (typeof configuration === 'object' && configuration !== null) {
+    const name = (configuration as Record<string, unknown>)['name'];
+    if (typeof name === 'string' && name.length > 0) return name;
+  }
+  for (const key of ['id', 'name']) {
+    const value = item[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return null;
 }
 
 function errorOf(result: RunResult): string {
@@ -123,7 +132,13 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
       '--label', 'sandbox.runtime=apple',
       volume,
     ]);
-    if (created.status !== 0) fail(`apple runtime: cannot create volume ${volume}: ${errorOf(created)}`);
+    if (created.status !== 0) {
+      // The apiserver intermittently answers list calls with failures;
+      // a create that then reports "already exists" proves the volume is
+      // there, so re-check instead of dying on the race.
+      if (/already exists/i.test(errorOf(created)) && AppleContainerRuntimeEngine.volumeExists(runner, volume)) return;
+      fail(`apple runtime: cannot create volume ${volume}: ${errorOf(created)}`);
+    }
   },
 
   volumeExists(runner, volume) {
@@ -134,12 +149,14 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     if (AppleContainerRuntimeEngine.networkExists(runner, network)) {
       const internal = AppleContainerRuntimeEngine.networkInternal(runner, network);
       if (internal === restricted) return;
-      // The internal flag is create-time immutable. Refuse to guess which
-      // containers are attached: the operator stops them first.
-      fail(
-        `apple runtime: network ${network} policy changed; stop attached containers, ` +
-          `delete the network with \`container network delete ${network}\`, then retry`,
-      );
+      // Same contract as docker: the caller detaches containers first; a
+      // refused removal names the real blocker.
+      const removed = runner.run('container', ['network', 'delete', network]);
+      if (removed.status !== 0) {
+        throw new Error(
+          `apple runtime: network ${network} has the wrong policy and is still attached: ${errorOf(removed)}`,
+        );
+      }
     }
     const args = [
       'network', 'create',
@@ -150,7 +167,13 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     if (restricted) args.push('--internal');
     args.push(network);
     const created = runner.run('container', args);
-    if (created.status !== 0) fail(`apple runtime: cannot create network ${network}: ${errorOf(created)}`);
+    if (created.status !== 0) {
+      if (/already exists/i.test(errorOf(created)) && AppleContainerRuntimeEngine.networkExists(runner, network)) {
+        const internal = AppleContainerRuntimeEngine.networkInternal(runner, network);
+        if (internal === restricted) return;
+      }
+      fail(`apple runtime: cannot create network ${network}: ${errorOf(created)}`);
+    }
   },
 
   containerNetworks(runner, container) {
@@ -162,11 +185,13 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
   },
 
   networkInternal(runner, network) {
+    // Verified live: open networks report "mode" : "nat", --internal
+    // networks report "mode" : "hostOnly". Anything else fails closed.
     const raw = runner.run('container', ['network', 'inspect', network]);
     if (raw.status !== 0) fail(`apple runtime: cannot inspect network ${network}: ${errorOf(raw)}`);
-    if (/"internal"\s*:\s*true/i.test(raw.stdout)) return true;
-    if (/"internal"\s*:\s*false/i.test(raw.stdout)) return false;
-    fail(`apple runtime: cannot determine internal flag of ${network} (unverified output shape)`);
+    if (/"mode"\s*:\s*"hostOnly"/.test(raw.stdout)) return true;
+    if (/"mode"\s*:\s*"nat"/.test(raw.stdout)) return false;
+    fail(`apple runtime: cannot determine internal flag of ${network} (unknown network mode)`);
   },
 
   createContainer(runner, entry, options: CreateOptions) {
@@ -174,6 +199,15 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     if (!AppleContainerRuntimeEngine.imageExists(runner, options.image)) {
       fail(`apple runtime: image not found locally: ${options.image}; build or pull it for this runtime first`);
     }
+    // Apple mounts fresh volumes root-owned without copying image
+    // ownership (unlike docker): hand the home tree to the agent user
+    // before the entrypoint runs unprivileged.
+    const owned = runner.run('container', [
+      'run', '--rm', '--user', 'root',
+      '--mount', `type=volume,source=${options.homeVolume},target=/home/agent`,
+      '--entrypoint', 'sh', options.image, '-c', 'chown -R agent:agent /home/agent',
+    ]);
+    if (owned.status !== 0) fail(`apple runtime: cannot prepare home volume: ${errorOf(owned)}`);
     const args = [
       'run', '-d', '--cap-drop', 'ALL', '--network', options.network, '--name', entry.container,
       '--label', 'sandbox.managed=true', '--label', `sandbox.workspace=${entry.id}`, '--label', 'sandbox.runtime=apple',
@@ -268,8 +302,7 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     for (const item of items) {
       const text = JSON.stringify(item);
       if (!text.includes('sandbox.managed')) continue;
-      const leaves = jsonStringLeaves(item);
-      const name = leaves.find((leaf) => leaf.startsWith('sandbox-') && !leaf.startsWith('sandbox-home-') && !leaf.startsWith('sandbox-net-'));
+      const name = appleName(item);
       if (name) names.push(name);
     }
     return names;
@@ -286,8 +319,7 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     }
     const names: string[] = [];
     for (const item of items) {
-      const leaves = jsonStringLeaves(item);
-      const name = leaves.find((leaf) => leaf.startsWith('sandbox-') && !leaf.startsWith('sandbox-home-') && !leaf.startsWith('sandbox-net-'));
+      const name = appleName(item);
       if (name) names.push(name);
     }
     return names;
@@ -304,8 +336,7 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     }
     const names: string[] = [];
     for (const item of items) {
-      const leaves = jsonStringLeaves(item);
-      const name = leaves.find((leaf) => leaf.startsWith('sandbox-'));
+      const name = appleName(item);
       if (name) names.push(name);
     }
     return names;
