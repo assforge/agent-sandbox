@@ -104,6 +104,11 @@ export function ensureReady(
       if (checkReadiness({ generation, fingerprint }, observed, true)) {
         return { generation, fingerprint };
       }
+      if (!observed && runtime.containerState(runner, entry.container, entry.id) !== 'running') {
+        throw new Error(
+          `container ${entry.container} exited during startup; inspect it with: sandbox workspace logs`,
+        );
+      }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
     }
     throw new Error(`container ${entry.container} did not reach readiness; launch no agent`);
@@ -118,7 +123,16 @@ export function ensureReady(
   runtime.startContainer(runner, entry.container);
   for (let i = 0; i < attempts; i += 1) {
     const observed = runtime.readReadyJson(runner, entry.container);
-    if (!observed || observed.fingerprint !== fingerprint) {
+    if (!observed) {
+      if (runtime.containerState(runner, entry.container, entry.id) !== 'running') {
+        throw new Error(
+          `container ${entry.container} exited during startup; inspect it with: sandbox workspace logs`,
+        );
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
+      continue;
+    }
+    if (observed.fingerprint !== fingerprint) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
       continue;
     }

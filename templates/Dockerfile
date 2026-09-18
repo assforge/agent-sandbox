@@ -22,6 +22,9 @@ RUN apt-get update \
 
 # Non-root agent user. Installed binaries live outside the home volume;
 # the home volume persists agent configuration and history per workspace.
+# The agent UID varies by builder base (docker resolves 1000, the Apple
+# builder already occupies it and resolves 1001). All ownership moves use
+# the name, never a number; a workspace is pinned to one runtime anyway.
 RUN useradd -m -s /bin/bash agent \
   && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot \
     /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
