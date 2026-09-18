@@ -50,7 +50,7 @@ describe('workspaceId', () => {
   });
 
   it('resolves the default registry path under the home directory', () => {
-    expect(defaultRegistryPath('/Users/a')).toBe('/Users/a/.sandbox/registry.json');
+    expect(defaultRegistryPath('/Users/a')).toBe('/Users/a/.agent.sandbox/registry.json');
   });
 
   it('rejects corrupt entries with the key instead of crashing later', () => {

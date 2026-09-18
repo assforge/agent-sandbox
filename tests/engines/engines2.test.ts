@@ -32,7 +32,7 @@ describe('host config', () => {
       expect(loadHostConfig(home)).toEqual({ runtime: DEFAULT_RUNTIME, terminal: DEFAULT_TERMINAL });
       saveHostConfig(home, { runtime: 'apple', terminal: 'herder' });
       expect(loadHostConfig(home)).toEqual({ runtime: 'apple', terminal: 'herder' });
-      writeFileSync(join(home, '.sandbox', 'config.json'), '{broken', 'utf8');
+      writeFileSync(join(home, '.agent.sandbox', 'config.json'), '{broken', 'utf8');
       expect(() => loadHostConfig(home)).toThrow(/cannot read host config/);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -44,7 +44,7 @@ describe('user catalog', () => {
   it('merges user JSON entries under built-ins', () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-usercat-'));
     try {
-      const dir = join(home, '.sandbox', 'engines');
+      const dir = join(home, '.agent.sandbox', 'engines');
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'kiro.json'), JSON.stringify([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: '9.9.9' }]), 'utf8');
       const entries = loadUserCatalog(home);

@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 
 import { assertSafeName } from './engines/types.js';
+import { sandboxDir } from './paths.js';
 
 export const INSTANCE_ENV_DIR = 'instances';
 
@@ -11,7 +12,7 @@ export function assertInstanceName(instance: string): void {
 }
 
 export function credentialsDir(homeDir: string, workspaceIdValue: string): string {
-  return join(homeDir, '.sandbox', workspaceIdValue, INSTANCE_ENV_DIR);
+  return join(sandboxDir(homeDir), workspaceIdValue, INSTANCE_ENV_DIR);
 }
 
 function envFile(homeDir: string, workspaceIdValue: string, instance: string): string {
