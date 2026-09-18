@@ -17,7 +17,7 @@ import {
   redactEnv,
   setCredentials,
 } from '../credentials.js';
-import { parseArgs, UsageError } from '../cli.js';
+import { canonicalAction, parseArgs, UsageError } from '../cli.js';
 import {
   type CommandRunner,
   type RunResult,
@@ -42,7 +42,7 @@ import {
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { migrateHomeDir, sandboxDir } from '../paths.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
-import { agentHelp, addHelp, credentialsHelp, describeAction, imageHelp, removeHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
+import { agentHelp, addHelp, credentialsHelp, describeAction, imageHelp, forgetHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
   constructor(
@@ -533,7 +533,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     }
     case 'unregister': {
       if (parsed.help) {
-        deps.stdout(removeHelp());
+        deps.stdout(forgetHelp());
         return 0;
       }
       const registry = loadRegistryOrThrow(deps);
@@ -651,7 +651,7 @@ function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
 
 async function workspaceCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {
   const registry = loadRegistryOrThrow(deps);
-  switch (action) {
+  switch (canonicalAction('workspace', action)) {
     case 'help':
       deps.stdout(workspaceHelp());
       return 0;
@@ -690,9 +690,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => describe(i.name, i.kind)).join(', ') || '(none)'}\n`);
       return 0;
     }
-    case 'register': {
+    case 'add': {
       const root = takeRestOption(rest, ['--root', '-r']);
-      if (!root) throw new UsageError('workspace register requires --root <path>');
+      if (!root) throw new UsageError('workspace add requires --root <path>');
       if (!existsSync(root)) {
         throw new CliError(`workspace root does not exist: ${root}`, 2);
       }
@@ -702,7 +702,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
     }
-    case 'unregister': {
+    case 'forget': {
       const root = workspace ? defaultCanonicalize(workspace) : defaultCanonicalize(deps.cwd);
       return unregisterWorkspace(deps, registry, root);
     }
@@ -939,6 +939,47 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (!approved) throw new CliError('unmount cancelled; nothing was changed', 1);
       saveRegistry(registryPathOf(deps), registry);
       deps.stdout(`mount ${path} dropped from ${entry.id}; applies on next start\n`);
+      return 0;
+    }
+    case 'prune': {
+      const every = rest.includes('--all');
+      const leftover = rest.filter((arg) => arg !== '--all');
+      if (leftover.length > 0) throw new UsageError(`unexpected argument: ${leftover[0]}`);
+      const targets: WorkspaceEntry[] = [];
+      if (every) {
+        targets.push(...Object.values(registry.workspaces));
+      } else {
+        const resolution = resolveWorkspace({
+          explicitRoot: workspace,
+          cwd: deps.cwd,
+          registry,
+          gitRoot: workspace === undefined ? detectGitRoot(deps) : null,
+        });
+        const entry = lookupWorkspace(registry, resolution.root);
+        if (!entry) throw new CliError(`no registered workspace in scope: ${resolution.root}`, 1);
+        targets.push(entry);
+      }
+      const stopped: { entry: WorkspaceEntry; rt: RuntimeEngine }[] = [];
+      for (const entry of targets) {
+        const rt = selectRuntime(deps, entry);
+        if (rt.containerState(deps.runner, entry.container, entry.id) === 'stopped') stopped.push({ entry, rt });
+      }
+      if (stopped.length === 0) {
+        deps.stdout('no stopped workspace containers to prune\n');
+        return 0;
+      }
+      const names = stopped.map((item) => item.entry.container).join(', ');
+      const approved = await deps.confirm(`remove ${stopped.length} stopped container(s): ${names}? Volumes, networks, images, and the registry are kept.`);
+      if (!approved) throw new CliError('prune cancelled; nothing was changed', 1);
+      for (const item of stopped) {
+        const handle = acquireLock(deps.lockDir, item.entry.id);
+        try {
+          item.rt.removeContainer(deps.runner, item.entry.container);
+        } finally {
+          handle.release();
+        }
+      }
+      deps.stdout(`pruned ${names}; volumes, networks, images, and the registry kept\n`);
       return 0;
     }
     case 'backup': {

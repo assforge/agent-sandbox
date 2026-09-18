@@ -624,18 +624,63 @@ describe('workspace lifecycle flows', () => {
   it('unregisters only after confirmation and keeps data resources', async () => {
     const { home, root, world, deps, out } = setup();
     try {
-      expect(await main(['rm', root], deps)).toBe(1);
+      expect(await main(['forget', root], deps)).toBe(1);
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       const deny = { ...deps, assumeYes: false, confirm: async () => false };
-      expect(await main(['rm', root], deny)).toBe(1);
-      expect(await main(['rm', root], deps)).toBe(0);
+      expect(await main(['forget', root], deny)).toBe(1);
+      expect(await main(['forget', root], deps)).toBe(0);
       expect(out.join('')).toContain('unregistered');
       expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces).toEqual({});
       expect(world.volumes.size).toBeGreaterThan(0);
       expect(world.containers.size).toBe(0);
       expect(await main(['workspace', 'unregister', '--workspace', root], deps)).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('prunes stopped containers and keeps everything else', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], counting)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], counting)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], counting)).toBe(0);
+      expect(await main(['workspace', 'prune', '--workspace', root], counting)).toBe(0);
+      expect(out.join('')).toContain('no stopped workspace containers');
+      expect(confirms).toBe(0);
+      expect(await main(['workspace', 'stop', '--workspace', root], counting)).toBe(0);
+      expect(await main(['workspace', 'prune', '--workspace', root], counting)).toBe(0);
+      expect(confirms).toBe(1);
+      expect(out.join('')).toContain('pruned sandbox-');
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      expect(registry.workspaces[id]).toBeDefined();
+      expect(world.containers.has(`sandbox-${id}`)).toBe(false);
+      expect([...world.volumes].some((name) => name.startsWith('sandbox-home-'))).toBe(true);
+      const deny = { ...counting, confirm: async () => false };
+      expect(await main(['workspace', 'start', '--workspace', root], deny)).toBe(0);
+      expect(await main(['workspace', 'stop', '--workspace', root], deny)).toBe(0);
+      expect(await main(['workspace', 'prune', '--workspace', root], deny)).toBe(1);
+      expect(world.containers.has(`sandbox-${id}`)).toBe(true);
+      const root2 = mkdtempSync(join(tmpdir(), 'sandbox-root2-'));
+      try {
+        expect(await main(['workspace', 'register', '--root', root2], counting)).toBe(0);
+        expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root2], counting)).toBe(0);
+        expect(await main(['workspace', 'start', '--workspace', root2], counting)).toBe(0);
+        expect(await main(['workspace', 'stop', '--workspace', root2], counting)).toBe(0);
+        expect(await main(['workspace', 'stop', '--workspace', root], counting)).toBe(0);
+        expect(await main(['workspace', 'prune', '--all'], counting)).toBe(0);
+        expect(world.containers.size).toBe(0);
+      } finally {
+        rmSync(root2, { recursive: true, force: true });
+      }
+      const outside = { ...counting, cwd: home };
+      expect(await main(['workspace', 'prune'], outside)).toBe(1);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });

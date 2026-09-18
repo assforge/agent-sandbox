@@ -17,6 +17,13 @@ export type ParsedCommand =
 
 export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as const;
 
+/** Long-standing action aliases resolve to their canonical short form. */
+export function canonicalAction(group: string, action: string): string {
+  if (group === 'workspace' && action === 'register') return 'add';
+  if (group === 'workspace' && action === 'unregister') return 'forget';
+  return action;
+}
+
 export class UsageError extends Error {
   readonly exitCode = 2;
 }
@@ -66,7 +73,7 @@ export function parseArgs(argv: string[]): ParsedCommand {
     if (first === 'terminal') return { kind: 'terminal', action, rest: tail, help };
     return { kind: 'agentAdmin', action, rest: tail, workspace, help };
   }
-  if (first === 'add' || first === 'rm') {
+  if (first === 'add' || first === 'forget') {
     const help = takeFlag(rest, ['--help', '-h']);
     if (rest.length > 1) throw new UsageError(`sandbox ${first} takes at most one path`);
     const root = rest[0];
