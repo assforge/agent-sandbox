@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { main, type MainDeps } from '../src/bin/sandbox.js';
+import { main, hasGitDir, type MainDeps } from '../src/bin/sandbox.js';
 import { emptyRegistry, saveRegistry } from '../src/registry.js';
 
 function deps(overrides: Partial<MainDeps> = {}): MainDeps & { out: string[]; err: string[] } {
@@ -97,6 +97,25 @@ describe('main', () => {
       expect(d.err.join('')).toContain('sandbox home moved from ~/.sandbox to ~/.agent.sandbox');
       expect(existsSync(join(home, '.agent.sandbox'))).toBe(true);
       expect(existsSync(join(home, '.sandbox'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the git probe outside a repository', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
+    try {
+      expect(hasGitDir(home)).toBe(false);
+      mkdirSync(join(home, 'repo', '.git'), { recursive: true });
+      expect(hasGitDir(join(home, 'repo', 'sub'))).toBe(true);
+      const seen: string[][] = [];
+      const d = deps({
+        homeDir: home,
+        cwd: home,
+        runner: { run: (command: string, args: string[]) => { seen.push([command, ...args]); return { status: 0, stdout: '', stderr: '' }; } },
+      });
+      expect(await main(['doctor'], d)).toBe(0);
+      expect(seen.some((call) => call[0] === 'git')).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
