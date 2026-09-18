@@ -866,16 +866,28 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (rest.length > 1) throw new UsageError(`unexpected argument: ${rest[1]}`);
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const term = selectTerminal(deps, entry);
-      const index = entry.instances.findIndex((item) => item.name === name);
-      const instance = entry.instances[index];
-      if (index < 0 || !instance) throw new CliError(`unknown instance: ${name}`, 1);
-      const approved = await deps.confirm(`close instance ${name}? Its window goes away; volumes, credentials, and fork state are kept.`);
-      if (!approved) throw new CliError('close cancelled; nothing was changed', 1);
+      const probed = entry.instances.find((item) => item.name === name);
+      if (!probed) throw new CliError(`unknown instance: ${name}`, 1);
+      const existed = term.windowExists(deps.runner, entry.session, probed.window);
+      if (existed) {
+        const approved = await deps.confirm(`close instance ${name}? Its window goes away; volumes, credentials, and fork state are kept.`);
+        if (!approved) throw new CliError('close cancelled; nothing was changed', 1);
+      }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        term.closeWindow(deps.runner, entry.session, instance.window);
-        entry.instances.splice(index, 1);
-        saveRegistry(registryPathOf(deps), registry);
+        const locked = loadRegistryOrThrow(deps);
+        const liveEntry = locked.workspaces[entry.id];
+        if (!liveEntry) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+        const index = liveEntry.instances.findIndex((item) => item.name === name);
+        const instance = liveEntry.instances[index];
+        if (index < 0 || !instance) throw new CliError(`unknown instance: ${name}`, 1);
+        const existsNow = term.windowExists(deps.runner, liveEntry.session, instance.window);
+        if (!existed && existsNow) {
+          throw new CliError(`instance ${name} became live; re-run: sandbox workspace close ${name}`, 1);
+        }
+        term.closeWindow(deps.runner, liveEntry.session, instance.window);
+        liveEntry.instances.splice(index, 1);
+        saveRegistry(registryPathOf(deps), locked);
         deps.stdout(`closed instance ${name}; fork state kept, prune with: sandbox workspace prune --forks\n`);
         return 0;
       } finally {

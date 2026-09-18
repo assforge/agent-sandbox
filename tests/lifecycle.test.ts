@@ -15,6 +15,10 @@ class FakeWorld {
   volumes = new Set<string>();
   networks = new Map<string, boolean>();
   sessions = new Map<string, Map<string, boolean>>();
+  hiddenSessions = new Set<string>();
+  listWindowsCalls = 0;
+  reviveAfterListWindows = 0;
+  revive: { session: string; window: string } | null = null;
   images = new Set<string>(['sandbox-workspace:current']);
   failBuild = false;
   lastBuildArgs: Record<string, string> = {};
@@ -258,6 +262,10 @@ class FakeWorld {
     }
     if (args[0] === 'list-windows') {
       const session = args[args.indexOf('-t') + 1] as string;
+      this.listWindowsCalls += 1;
+      if (this.revive && this.listWindowsCalls > this.reviveAfterListWindows) {
+        this.sessions.get(this.revive.session)?.set(this.revive.window, true);
+      }
       return { status: 0, stdout: [...(this.sessions.get(session) ?? new Map()).keys()].join('\n'), stderr: '' };
     }
     if (args[0] === 'list-panes') {
@@ -274,7 +282,8 @@ class FakeWorld {
       return { status: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'list-sessions') {
-      return { status: 0, stdout: [...this.sessions.keys()].join('\n'), stderr: '' };
+      const names = [...this.sessions.keys()].filter((name) => !this.hiddenSessions.has(name));
+      return { status: 0, stdout: names.join('\n'), stderr: '' };
     }
     if (args[0] === 'kill-window') {
       const target = args[args.indexOf('-t') + 1] as string;
@@ -701,8 +710,11 @@ describe('workspace lifecycle flows', () => {
   });
 
   it('runs instances in shared, fork, and fresh homes with close and fork prune', async () => {
-    const { home, root, world, deps, out } = setup();
+    const { home, root, world, deps, out, err } = setup();
     try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      const deny = { ...deps, confirm: async () => false };
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
@@ -736,6 +748,68 @@ describe('workspace lifecycle flows', () => {
       expect(rmCall).toContain(`sandbox-home-${id}:/v`);
       expect(await main(['workspace', 'prune', '--forks', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('no orphan fork state');
+      const names = (): string[] => loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name) ?? [];
+      expect(names()).toEqual(expect.arrayContaining(['codex', 'w2']));
+      expect(await main(['workspace', 'close', 'codex', '--workspace', root], deny)).toBe(1);
+      expect(err.join('')).toContain('close cancelled');
+      expect(names()).toContain('codex');
+      expect(world.sessions.get(`sandbox-${id}`)?.has('codex')).toBe(true);
+      const liveBefore = confirms;
+      expect(await main(['workspace', 'close', 'codex', '--workspace', root], counting)).toBe(0);
+      expect(confirms).toBe(liveBefore + 1);
+      expect(names()).not.toContain('codex');
+      expect(world.sessions.get(`sandbox-${id}`)?.has('codex')).toBe(false);
+      world.sessions.get(`sandbox-${id}`)?.delete('w2');
+      const before = confirms;
+      expect(await main(['workspace', 'close', 'w2', '--workspace', root], counting)).toBe(0);
+      expect(confirms).toBe(before);
+      expect(out.join('')).toContain('closed instance w2');
+      expect(names()).not.toContain('w2');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still confirms close when list-sessions omits a live window', async () => {
+    const { home, root, world, deps } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      world.hiddenSessions.add(`sandbox-${id}`);
+      expect(await main(['workspace', 'close', 'codex', '--workspace', root], counting)).toBe(0);
+      expect(confirms).toBe(1);
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name)).not.toContain('codex');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('aborts an unconfirmed close if the window reappears under the lock', async () => {
+    const { home, root, world, deps, err } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--name', 'w2', '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const session = `sandbox-${id}`;
+      world.sessions.get(session)?.delete('w2');
+      world.reviveAfterListWindows = 1;
+      world.revive = { session, window: 'w2' };
+      expect(await main(['workspace', 'close', 'w2', '--workspace', root], counting)).toBe(1);
+      expect(confirms).toBe(0);
+      expect(err.join('')).toContain('became live');
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name)).toContain('w2');
+      expect(world.sessions.get(session)?.has('w2')).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
