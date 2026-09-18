@@ -230,6 +230,20 @@ export function realRunner(): CommandRunner {
         return toRunResult(error);
       }
     },
+    runAttached: (command: string, args: string[]): RunResult => {
+      // No timeout: attach parks for the life of the session. stdio is
+      // inherited so the child owns the terminal; piped stdio is exactly
+      // what made every attach fail with "not a terminal".
+      try {
+        execFileSync(command, args, { stdio: 'inherit' });
+        return { status: 0, stdout: '', stderr: '' };
+      } catch (error) {
+        const status = typeof (error as { status?: unknown }).status === 'number'
+          ? (error as { status: number }).status
+          : 1;
+        return { status, stdout: '', stderr: '' };
+      }
+    },
   };
 }
 

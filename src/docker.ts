@@ -6,6 +6,18 @@ export interface RunResult {
 
 export interface CommandRunner {
   run: (command: string, args: string[]) => RunResult;
+  /**
+   * Run with inherited stdio and no timeout, for commands that take over
+   * the user's terminal (attach). Optional so unit fakes stay small;
+   * callers must go through runTerminal, which falls back to run.
+   */
+  runAttached?: (command: string, args: string[]) => RunResult;
+}
+
+/** Execute through runAttached when the runner offers it (real runs), else run (tests). */
+export function runTerminal(runner: CommandRunner, command: string, args: string[]): RunResult {
+  if (runner.runAttached) return runner.runAttached(command, args);
+  return runner.run(command, args);
 }
 
 export type ContainerState = 'absent' | 'stopped' | 'running' | 'foreign';

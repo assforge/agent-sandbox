@@ -17,6 +17,7 @@
  *   the dead signal, and respawn is identical to create.
  */
 import type { CommandRunner } from '../docker.js';
+import { runTerminal } from '../docker.js';
 import { assertSafeName, type ExecSpec } from './types.js';
 import type { TerminalEngine } from './terminal.js';
 
@@ -242,7 +243,7 @@ export const HerderTerminalEngine: TerminalEngine = {
 
   reattach(runner, session, insideHerder) {
     if (insideHerder) return;
-    const result = runner.run('herdr', ['session', 'attach', session]);
+    const result = runTerminal(runner, 'herdr', ['session', 'attach', session]);
     if (result.status !== 0) {
       throw new Error(`cannot attach to herder session ${session}: ${result.stderr.trim() || result.stdout.trim()}`);
     }
