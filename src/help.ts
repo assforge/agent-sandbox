@@ -227,7 +227,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything is current, and otherwise build, activate, and recreate in one confirmed step.\n',
     prune: 'Usage: sandbox workspace prune [--all] [--forks]\n\nRemove stopped containers of this workspace (or every registered workspace with --all) after one confirmation. --forks removes orphan fork state instead; credential files are never touched. Volumes, networks, images, and the registry are kept.\n',
     attach: 'Usage: sandbox workspace attach\n\nReconnect only; fails when the session is absent, warns when the container is stopped.\n',
-    close: 'Usage: sandbox workspace close <instance>\n\nClose the instance window and forget the roster entry. Volumes, credentials, and fork state are kept; prune forks with: sandbox workspace prune --forks.\n',
+    close: 'Usage: sandbox workspace close <instance>\n\nClose the instance window and forget the roster entry. Asks for confirmation when the window is still live; already-gone windows close without a prompt. Volumes, credentials, and fork state are kept; prune forks with: sandbox workspace prune --forks.\n',
     reopen: 'Usage: sandbox workspace reopen [--no-attach]\n\nRecreate every registered window after a reboot. The roster in the registry is the source of truth.\n',
     logs: 'Usage: sandbox workspace logs [--tail, -t <n>]\n\nShow container output for debugging failed startups.\n',
     exec: 'Usage: sandbox workspace exec -- <command> [arguments...]\n\nRun a command in the ready container without adding a window. Starts a stopped container first and propagates the exit status.\n',
