@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
-import { agentEngine, agentEngines, loadUserCatalog, outdatedEngines, type AgentEngine } from '../engines/agent.js';
+import { agentEngine, agentEngines, loadUserCatalog, outdatedEngines, type AgentEngine, type VersionRunner } from '../engines/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import {
@@ -816,6 +816,35 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
   }
 }
 
+/** Version queries backed by npm and curl via argv vectors (no shell, no new deps). */
+function makeVersionRunner(deps: MainDeps): VersionRunner {
+  return {
+    installedVersion: (pkg) => {
+      const result = deps.runner.run('npm', ['ls', '-g', pkg, '--depth=0', '--json']);
+      if (result.status !== 0) return null;
+      try {
+        const parsed = JSON.parse(result.stdout) as { dependencies?: Record<string, { version?: unknown }> };
+        const version = parsed.dependencies?.[pkg]?.version;
+        return typeof version === 'string' ? version : null;
+      } catch {
+        return null;
+      }
+    },
+    latestVersion: (pkg) => {
+      const result = deps.runner.run('npm', ['view', pkg, 'version']);
+      if (result.status !== 0) return null;
+      const version = result.stdout.trim();
+      return version || null;
+    },
+    fetchText: (url) => {
+      const result = deps.runner.run('curl', ['-fsSL', '--max-time', '10', url]);
+      if (result.status !== 0) return null;
+      const text = result.stdout.trim();
+      return text || null;
+    },
+  };
+}
+
 async function agentCommand(deps: MainDeps, action: string, rest: string[]): Promise<number> {
   const agents = agentRegistry(deps);
   switch (action) {
@@ -832,30 +861,15 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
         return 0;
       }
       for (const item of listed) {
-        deps.stdout(`${item.name}: ${item.npmPackage ?? 'native'}@${item.pinnedVersion ?? 'native'}\n`);
+        const spec = agents.get(item.name)?.installSpec();
+        deps.stdout(spec?.channel === 'native'
+          ? `${item.name}: native ${item.pinnedVersion} (installer)\n`
+          : `${item.name}: ${item.npmPackage}@${item.pinnedVersion} (npm)\n`);
       }
       return 0;
     }
     case 'outdated': {
-      const entries = outdatedEngines({
-        installedVersion: (pkg) => {
-          const result = deps.runner.run('npm', ['ls', '-g', pkg, '--depth=0', '--json']);
-          if (result.status !== 0) return null;
-          try {
-            const parsed = JSON.parse(result.stdout) as { dependencies?: Record<string, { version?: unknown }> };
-            const version = parsed.dependencies?.[pkg]?.version;
-            return typeof version === 'string' ? version : null;
-          } catch {
-            return null;
-          }
-        },
-        latestVersion: (pkg) => {
-          const result = deps.runner.run('npm', ['view', pkg, 'version']);
-          if (result.status !== 0) return null;
-          const version = result.stdout.trim();
-          return version || null;
-        },
-      }, agents.values());
+      const entries = outdatedEngines(makeVersionRunner(deps), agents.values());
       if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ agents: entries }, null, 2)}\n`);
         return 0;
@@ -871,6 +885,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       const rt = selectRuntime(deps);
       const names = target === 'all' ? [...agents.keys()] : [target];
       const overrides: Record<string, string> = {};
+      const versionQueries = makeVersionRunner(deps);
       const defs = names.map((name) => {
         try {
           return agentEngine(agents, name);
@@ -880,14 +895,16 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       });
       for (const def of defs) {
         const spec = def.installSpec();
-        if (spec.channel !== 'npm' || !spec.npmPackage || !spec.pinnedVersion) {
-          deps.stdout(`${def.name} is native and has no npm upgrade channel\n`);
+        if (!spec.pinnedVersion) {
+          deps.stdout(`${def.name} has no pinned version and cannot be upgraded\n`);
           continue;
         }
-        const probed = deps.runner.run('npm', ['view', spec.npmPackage, 'version']);
-        const latest = probed.status === 0 ? probed.stdout.trim() : '';
-        if (!latest) throw new CliError(`cannot resolve latest version for ${spec.npmPackage}`, 1);
-        overrides[spec.npmPackage] = latest;
+        const latest = def.latestVersion(versionQueries);
+        if (!latest) {
+          deps.stdout(`${def.name}: latest unknown, keeping pinned ${spec.pinnedVersion}\n`);
+          continue;
+        }
+        overrides[spec.npmPackage ?? def.name] = latest;
         deps.stdout(`${def.name}: pinned ${spec.pinnedVersion}, latest ${latest}\n`);
       }
       if (Object.keys(overrides).length === 0) return 0;
@@ -903,12 +920,13 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
             }
           },
           inspectBinaryVersions: (candidate) => {
-            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'opencode --version; codex --version; copilot --version']);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'claude --version; opencode --version; codex --version; copilot --version']);
             const versions: Record<string, string> = {};
             const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-            if (lines[0]) versions['opencode-ai'] = lines[0];
-            if (lines[1]) versions['@openai/codex'] = lines[1].replace(/^codex-cli /, '');
-            if (lines[2]) versions['@github/copilot'] = lines[2].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
+            if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
+            if (lines[1]) versions['opencode-ai'] = lines[1];
+            if (lines[2]) versions['@openai/codex'] = lines[2].replace(/^codex-cli /, '');
+            if (lines[3]) versions['@github/copilot'] = lines[3].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
             return versions;
           },
           verifyCandidate: (candidate) => {
@@ -1109,12 +1127,13 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
             }
           },
           inspectBinaryVersions: (candidate) => {
-            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'opencode --version; codex --version; copilot --version']);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'claude --version; opencode --version; codex --version; copilot --version']);
             const versions: Record<string, string> = {};
             const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-            if (lines[0]) versions['opencode-ai'] = lines[0];
-            if (lines[1]) versions['@openai/codex'] = lines[1].replace(/^codex-cli /, '');
-            if (lines[2]) versions['@github/copilot'] = lines[2].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
+            if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
+            if (lines[1]) versions['opencode-ai'] = lines[1];
+            if (lines[2]) versions['@openai/codex'] = lines[2].replace(/^codex-cli /, '');
+            if (lines[3]) versions['@github/copilot'] = lines[3].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
             return versions;
           },
           verifyCandidate: (candidate) => {

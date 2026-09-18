@@ -4,15 +4,17 @@
 ARG OPENCODE_VERSION=1.18.31
 ARG CODEX_VERSION=0.154.0
 ARG COPILOT_VERSION=1.0.85
+ARG CLAUDE_VERSION=2.1.276
 
 FROM node:22-bookworm-slim
 
 ARG OPENCODE_VERSION
 ARG CODEX_VERSION
 ARG COPILOT_VERSION
+ARG CLAUDE_VERSION
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g \
     "opencode-ai@${OPENCODE_VERSION}" \
@@ -35,6 +37,11 @@ RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
 
 USER agent
 WORKDIR /home/agent/work
+
+# Claude ships outside npm: the official installer lands in ~/.local/bin,
+# which is outside the persisted home volume and refreshed on every build.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}"
+ENV PATH="/home/agent/.local/bin:${PATH}"
 
 ENTRYPOINT ["/usr/local/bin/sandbox-entrypoint.sh"]
 CMD ["sleep", "infinity"]

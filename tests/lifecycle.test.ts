@@ -17,6 +17,7 @@ class FakeWorld {
   sessions = new Map<string, Map<string, boolean>>();
   images = new Set<string>(['sandbox-workspace:current']);
   failBuild = false;
+  lastBuildArgs: Record<string, string> = {};
 
   imageIdOf = (image: string): string => {
     const alnum = image.replace(/[^a-zA-Z0-9]/g, '');
@@ -40,6 +41,7 @@ class FakeWorld {
     if (command === 'docker') return this.docker(args);
     if (command === 'tmux') return this.tmux(args);
     if (command === 'npm') return this.npm(args);
+    if (command === 'curl') return { status: 0, stdout: '2.1.277\n', stderr: '' };
     return { status: 0, stdout: '', stderr: '' };
   };
 
@@ -146,8 +148,13 @@ class FakeWorld {
     if (verb === 'run' && rest[0] === '--rm') {
       const env = this.envOf(rest);
       const script = rest[rest.length - 1] as string;
-      if (script.includes('opencode --version')) {
-        return { status: 0, stdout: '1.18.31\ncodex-cli 0.154.0\nGitHub Copilot CLI 1.0.85.\n', stderr: '' };
+      if (script.includes('claude --version')) {
+        const arg = (name: string, fallback: string): string => this.lastBuildArgs[name] ?? fallback;
+        return {
+          status: 0,
+          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.154.0')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.85')}.\n`,
+          stderr: '',
+        };
       }
       if (script.includes('cat /tmp/sandbox-ready/ready.json')) {
         return {
@@ -203,6 +210,13 @@ class FakeWorld {
     }
     if (verb === 'build') {
       if (this.failBuild) return { status: 1, stdout: 'STEP 3/9 failed\nboom\n', stderr: 'error' };
+      this.lastBuildArgs = {};
+      for (let i = 0; i < args.length; i += 1) {
+        if (args[i] === '--build-arg' && typeof args[i + 1] === 'string') {
+          const [key, ...value] = (args[i + 1] as string).split('=');
+          this.lastBuildArgs[key as string] = value.join('=');
+        }
+      }
       return { status: 0, stdout: 'built', stderr: '' };
     }
     if (verb === 'logs') return { status: 0, stdout: 'entrypoint line 1\nready written\n', stderr: '' };
@@ -401,6 +415,8 @@ describe('workspace lifecycle flows', () => {
     try {
       expect(await main(['agent', 'upgrade', 'codex'], deps)).toBe(0);
       expect(out.join('')).toContain('Activate explicitly');
+      expect(await main(['agent', 'upgrade', 'all'], deps)).toBe(0);
+      expect(out.join('')).toContain('claude: pinned 2.1.276, latest 2.1.277');
       expect(await main(['agent', 'upgrade', 'nope'], deps)).toBe(1);
     } finally {
       rmSync(home, { recursive: true, force: true });
