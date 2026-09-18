@@ -65,11 +65,24 @@ describe('workspaceId', () => {
         ['bad instance', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [{ name: '', kind: 'k', window: 'w' }], mounts: [] } } }],
         ['bad mounts', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [42] } } }],
         ['bad network', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], network: 'wide' } } }],
+        ['bad forks', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], forks: [42] } } }],
+        ['bad homeMode', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [{ name: 'w', kind: 'k', window: 'w', homeMode: 'mansion' }], mounts: [] } } }],
       ];
       for (const [label, document] of cases) {
         writeFileSync(path, JSON.stringify(document), 'utf8');
         expect(() => loadRegistry(path), label).toThrow(/invalid|unsupported/);
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('backfills forks for registries written before they existed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sandbox-reg-'));
+    try {
+      const path = join(dir, 'registry.json');
+      writeFileSync(path, JSON.stringify({ version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], image: null } } }), 'utf8');
+      expect(loadRegistry(path).workspaces['a']?.forks).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -145,7 +145,7 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
       throw bad('instance homeMode must be shared, fork, or fresh');
     }
   }
-  if (!Array.isArray(entry.forks) || !entry.forks.every((fork) => typeof fork === 'string')) {
+  if (entry.forks !== undefined && (!Array.isArray(entry.forks) || !entry.forks.every((fork) => typeof fork === 'string'))) {
     throw bad('forks must be an array of strings');
   }
   if (!Array.isArray(entry.mounts) || !entry.mounts.every((mount) => typeof mount === 'string')) {
