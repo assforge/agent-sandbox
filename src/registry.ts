@@ -9,7 +9,17 @@ export interface InstanceEntry {
   name: string;
   kind: string;
   window: string;
+  /**
+   * HOME strategy. Absent means shared (the pre-modes default going
+   * forward): the instance uses the workspace home at /home/agent.
+   * fork clones agent state on first launch, fresh starts empty.
+   */
+  homeMode?: HomeMode;
 }
+
+export type HomeMode = 'shared' | 'fork' | 'fresh';
+
+export const HOME_MODES: readonly HomeMode[] = ['shared', 'fork', 'fresh'];
 
 export type NetworkPolicy = 'open' | 'restricted';
 
@@ -28,6 +38,8 @@ export interface WorkspaceEntry {
   /** Terminal engine that owns this workspace's windows. */
   terminal: string;
   mounts: string[];
+  /** Fork names with state under instances/. Pruned only explicitly. */
+  forks: string[];
 }
 
 export interface Registry {
@@ -96,6 +108,7 @@ export function loadRegistry(registryPath: string): Registry {
     // Backfill registries written before the network policy existed.
     if (entry.network !== 'open' && entry.network !== 'restricted') entry.network = 'open';
     if (entry.previousImage === undefined) entry.previousImage = null;
+    if (!Array.isArray(entry.forks)) entry.forks = [];
     if (typeof entry.runtime !== 'string' || entry.runtime.length === 0) entry.runtime = 'docker';
     if (typeof entry.terminal !== 'string' || entry.terminal.length === 0) entry.terminal = 'tmux';
   }
@@ -128,6 +141,12 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
     for (const field of ['name', 'kind', 'window'] as const) {
       if (!nonEmptyString(fields[field])) throw bad(`instance ${field} must be a non-empty string`);
     }
+    if (fields['homeMode'] !== undefined && !HOME_MODES.includes(fields['homeMode'] as HomeMode)) {
+      throw bad('instance homeMode must be shared, fork, or fresh');
+    }
+  }
+  if (!Array.isArray(entry.forks) || !entry.forks.every((fork) => typeof fork === 'string')) {
+    throw bad('forks must be an array of strings');
   }
   if (!Array.isArray(entry.mounts) || !entry.mounts.every((mount) => typeof mount === 'string')) {
     throw bad('mounts must be an array of strings');
@@ -195,6 +214,7 @@ export function registerWorkspace(
     runtime: options.runtime ?? 'docker',
     terminal: options.terminal ?? 'tmux',
     mounts: [...mounts],
+    forks: [],
   };
   registry.workspaces[id] = entry;
   return entry;

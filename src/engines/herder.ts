@@ -249,8 +249,7 @@ export const HerderTerminalEngine: TerminalEngine = {
     }
   },
 
-  killSession(runner, session) {
-    // stop/delete answer in plain text, not JSON: exit status decides.
+  killSession(runner, session) {    // stop/delete answer in plain text, not JSON: exit status decides.
     const stopped = runner.run('herdr', ['--session', session, 'session', 'stop', session]);
     if (stopped.status !== 0) {
       const text = `${stopped.stdout} ${stopped.stderr}`;
@@ -264,6 +263,15 @@ export const HerderTerminalEngine: TerminalEngine = {
       if (!/not found|no herdr server is running/.test(text)) {
         throw new Error(`herdr session delete failed: ${text.trim()}`);
       }
+    }
+  },
+
+  closeWindow(runner, session, window) {
+    const tabId = herderTabId(runner, session, window);
+    if (!tabId) return;
+    const closed = runner.run('herdr', ['--session', session, 'tab', 'close', tabId]);
+    if (closed.status !== 0) {
+      throw new Error(`herdr tab close failed: ${closed.stderr.trim() || closed.stdout.trim()}`);
     }
   },
 

@@ -54,13 +54,18 @@ ${SHARED_HELP}
 }
 
 export function agentHelp(): string {
-  return `Usage: sandbox <agent> [--name, -n <name>] [--no-attach] [-- <agent arguments...>]
+  return `Usage: sandbox <agent> [--name, -n <name>] [--home <mode>] [--no-attach] [-- <agent arguments...>]
 
 Supported agents: ${agentNames()} (see sandbox agent list for the live registry).
 
 An existing matching instance is selected. An occupied name of another
 kind is rejected. Additional instances require distinct names.
 Instance names use letters, digits, dot, underscore, or hyphen.
+
+Home modes (default shared): shared points at the workspace home,
+fork clones agent state on first launch, fresh starts empty. The mode
+is recorded on first launch and kept afterwards. Shared instances
+should not run concurrently: they read and write the same files.
 
 Everything after -- is forwarded to the agent without reparsing.
 Provider secrets are not accepted as wrapper command-line arguments;
@@ -86,6 +91,7 @@ Commands:
   upgrade      Rebuild agents and recreate in one step
   prune        Remove stopped containers, keep everything else
   attach       Reconnect to the terminal session
+  close        Close an instance window, keep its data
   reopen       Recreate every registered window
   logs         Show container output for debugging
   exec         Run a command in the ready container
@@ -219,8 +225,9 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     stop: 'Usage: sandbox workspace stop\n\nAsk for confirmation when instances are live. Keeps volumes.\n',
     restart: 'Usage: sandbox workspace restart\n\nStop and bring the same image back. Asks for confirmation when instances are live.\n',
     upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything is current, and otherwise build, activate, and recreate in one confirmed step.\n',
-    prune: 'Usage: sandbox workspace prune [--all]\n\nRemove stopped containers of this workspace (or every registered workspace with --all) after one confirmation. Volumes, networks, images, and the registry are kept.\n',
+    prune: 'Usage: sandbox workspace prune [--all] [--forks]\n\nRemove stopped containers of this workspace (or every registered workspace with --all) after one confirmation. --forks removes orphan fork state instead; credential files are never touched. Volumes, networks, images, and the registry are kept.\n',
     attach: 'Usage: sandbox workspace attach\n\nReconnect only; fails when the session is absent, warns when the container is stopped.\n',
+    close: 'Usage: sandbox workspace close <instance>\n\nClose the instance window and forget the roster entry. Volumes, credentials, and fork state are kept; prune forks with: sandbox workspace prune --forks.\n',
     reopen: 'Usage: sandbox workspace reopen [--no-attach]\n\nRecreate every registered window after a reboot. The roster in the registry is the source of truth.\n',
     logs: 'Usage: sandbox workspace logs [--tail, -t <n>]\n\nShow container output for debugging failed startups.\n',
     exec: 'Usage: sandbox workspace exec -- <command> [arguments...]\n\nRun a command in the ready container without adding a window. Starts a stopped container first and propagates the exit status.\n',

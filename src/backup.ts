@@ -91,6 +91,7 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     runtime: typeof record['runtime'] === 'string' && record['runtime'].length > 0 ? (record['runtime'] as string) : 'docker',
     terminal: typeof record['terminal'] === 'string' && record['terminal'].length > 0 ? (record['terminal'] as string) : 'tmux',
     mounts,
+    forks: [],
   };
   registry.workspaces[id] = entry;
   runner.copyToContainer(entry.container, join(outputDir, 'home'), '/home/agent');

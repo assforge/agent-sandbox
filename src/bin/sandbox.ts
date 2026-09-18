@@ -26,7 +26,7 @@ import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
 import { TERMINAL_ENGINES, type TerminalEngine } from '../engines/terminal.js';
 import { buildCandidate, activateImage, parseInspectedVersions, rollbackImage, INSPECT_VERSIONS_SCRIPT } from '../image.js';
 import { acquireLock } from '../lock.js';
-import { ensureInstanceHome, ensureReady, instanceHome, stopWorkspace } from '../lifecycle.js';
+import { ensureInstanceHome, ensureReady, homeDirForInstance, stopWorkspace } from '../lifecycle.js';
 import { dryRunMigration } from '../migrate.js';
 import { loadHostConfig, saveHostConfig } from '../hostconfig.js';
 import {
@@ -372,14 +372,14 @@ function requireImage(entry: WorkspaceEntry): string {
 }
 
 /**
- * Per-instance launch environment: stored credentials plus a dedicated
- * HOME so agent configuration and history do not cross instances.
- * HOME wins over any stored HOME key: the instance directory is the
- * isolation mechanism, not a suggestion.
+ * Per-instance launch environment: stored credentials plus HOME.
+ * Shared mode points at the workspace home; fork and fresh isolate per
+ * instance directory. HOME wins over any stored HOME key. Absent mode
+ * means shared.
  */
-function launchEnvFor(deps: MainDeps, entry: WorkspaceEntry, instance: string): Record<string, string> {
+function launchEnvFor(deps: MainDeps, entry: WorkspaceEntry, instance: string, homeMode?: string): Record<string, string> {
   const stored = loadCredentials(deps.homeDir, entry.id, instance) ?? {};
-  return { ...stored, HOME: instanceHome(instance) };
+  return { ...stored, HOME: homeDirForInstance(instance, homeMode) };
 }
 
 export async function main(argv: string[], deps: MainDeps): Promise<number> {
@@ -471,11 +471,13 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (!entry.instances.some((item) => item.name === name)) {
-          entry.instances.push({ name, kind: 'shell', window: name });
+          entry.instances.push({ name, kind: 'shell', window: name, homeMode: parsed.kind === 'shell' ? parsed.homeMode : undefined });
+          if (parsed.kind === 'shell' && parsed.homeMode === 'fork' && !entry.forks.includes(name)) entry.forks.push(name);
           saveRegistry(registryPathOf(deps), registry);
         }
-        const launchEnv = launchEnvFor(deps, entry, name);
-        ensureInstanceHome(deps.runner, rt, entry.container, name);
+        const shellMode = entry.instances.find((item) => item.name === name)?.homeMode ?? (parsed.kind === 'shell' ? parsed.homeMode : undefined);
+        const launchEnv = launchEnvFor(deps, entry, name, shellMode);
+        ensureInstanceHome(deps.runner, rt, entry.container, name, shellMode);
         term.openAgentWindow(deps.runner, entry.session, name, rt.execVector(entry.container, { workdir: entry.root, argv: ['bash'], env: launchEnv }), entry.root);
       } finally {
         handle.release();
@@ -507,11 +509,13 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
         if (!same) {
-          entry.instances.push({ name, kind: parsed.agent, window: name });
+          entry.instances.push({ name, kind: parsed.agent, window: name, homeMode: parsed.homeMode });
+          if (parsed.homeMode === 'fork' && !entry.forks.includes(name)) entry.forks.push(name);
           saveRegistry(registryPathOf(deps), registry);
         }
-        const launchEnv = launchEnvFor(deps, entry, name);
-        ensureInstanceHome(deps.runner, rt, entry.container, name);
+        const mode = same?.homeMode ?? parsed.homeMode;
+        const launchEnv = launchEnvFor(deps, entry, name, mode);
+        ensureInstanceHome(deps.runner, rt, entry.container, name, mode);
         launched = term.openAgentWindow(
           deps.runner,
           entry.session,
@@ -618,6 +622,46 @@ export function reattachOrHint(deps: MainDeps, term: TerminalEngine, session: st
     );
   }
 }
+/** Remove orphan fork state: forks with no roster entry left.
+ * Fork names share the instance charset (letters, digits, dot,
+ * underscore, hyphen), so interpolation below cannot break out.
+ * Credential files are never touched: clear them explicitly.
+ */
+async function pruneForks(deps: MainDeps, registry: Registry, targets: WorkspaceEntry[]): Promise<number> {
+  const victims: { entry: WorkspaceEntry; rt: RuntimeEngine; fork: string }[] = [];
+  for (const entry of targets) {
+    const live = new Set(entry.instances.map((item) => item.name));
+    const rt = selectRuntime(deps, entry);
+    for (const fork of entry.forks) {
+      if (!live.has(fork)) victims.push({ entry, rt, fork });
+    }
+  }
+  if (victims.length === 0) {
+    deps.stdout('no orphan fork state to prune\n');
+    return 0;
+  }
+  const names = victims.map((item) => `${item.entry.id}:${item.fork}`).join(', ');
+  const approved = await deps.confirm(`remove ${victims.length} orphan fork(s): ${names}? Credential files are kept.`);
+  if (!approved) throw new CliError('prune cancelled; nothing was changed', 1);
+  for (const item of victims) {
+    const handle = acquireLock(deps.lockDir, item.entry.id);
+    try {
+      const probed = item.rt.runOneShot(
+        deps.runner,
+        requireImage(item.entry),
+        { SANDBOX_GENERATION: 'prune', SANDBOX_CONFIG_FINGERPRINT: 'prune' },
+        ['sh', '-c', `rm -rf '/home/agent/instances/${item.fork}'`],
+      );
+      if (probed.status !== 0) throw new CliError(`cannot prune fork ${item.fork}`, 1);
+      item.entry.forks = item.entry.forks.filter((fork) => fork !== item.fork);
+      saveRegistry(registryPathOf(deps), registry);
+    } finally {
+      handle.release();
+    }
+  }
+  deps.stdout(`pruned forks: ${names}; credential files kept\n`);
+  return 0;
+}
 
 /** Remove a workspace registration. Stops the container and kills the
  * session after confirmation when anything is live. Volumes, networks,
@@ -705,15 +749,16 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const windows = alive
         ? deps.runner.run('tmux', ['list-windows', '-t', entry.session, '-F', '#{window_name}']).stdout.split('\n').map((line) => line.trim())
         : [];
-      const describe = (name: string, kind: string): string => {
-        if (!alive) return `${name}(${kind}, session absent)`;
-        return windows.includes(name) ? `${name}(${kind})` : `${name}(${kind}, window missing)`;
+      const describe = (name: string, kind: string, homeMode?: string): string => {
+        const home = homeMode ?? 'shared';
+        if (!alive) return `${name}(${kind}:${home}, session absent)`;
+        return windows.includes(name) ? `${name}(${kind}:${home})` : `${name}(${kind}:${home}, window missing)`;
       };
       if ((rest.includes('--json') || rest.includes('-j'))) {
-        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances.map((i) => ({ name: i.name, kind: i.kind, window: windows.includes(i.window) })) }, null, 2)}\n`);
+        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances.map((i) => ({ name: i.name, kind: i.kind, window: windows.includes(i.window), home: i.homeMode ?? 'shared' })) }, null, 2)}\n`);
         return 0;
       }
-      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => describe(i.name, i.kind)).join(', ') || '(none)'}\n`);
+      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => describe(i.name, i.kind, i.homeMode)).join(', ') || '(none)'}\n`);
       return 0;
     }
     case 'link': {
@@ -812,6 +857,28 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         handle.release();
       }
     }
+    case 'close': {
+      const name = rest[0];
+      if (!name) throw new UsageError('workspace close requires <instance>');
+      if (rest.length > 1) throw new UsageError(`unexpected argument: ${rest[1]}`);
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const term = selectTerminal(deps, entry);
+      const index = entry.instances.findIndex((item) => item.name === name);
+      const instance = entry.instances[index];
+      if (index < 0 || !instance) throw new CliError(`unknown instance: ${name}`, 1);
+      const approved = await deps.confirm(`close instance ${name}? Its window goes away; volumes, credentials, and fork state are kept.`);
+      if (!approved) throw new CliError('close cancelled; nothing was changed', 1);
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        term.closeWindow(deps.runner, entry.session, instance.window);
+        entry.instances.splice(index, 1);
+        saveRegistry(registryPathOf(deps), registry);
+        deps.stdout(`closed instance ${name}; fork state kept, prune with: sandbox workspace prune --forks\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
     case 'attach': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
@@ -864,8 +931,8 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
               continue;
             }
           }
-          const launch = rt.execVector(entry.container, { workdir: entry.root, argv: launchArgv, env: launchEnvFor(deps, entry, instance.name) });
-          ensureInstanceHome(deps.runner, rt, entry.container, instance.name);
+          const launch = rt.execVector(entry.container, { workdir: entry.root, argv: launchArgv, env: launchEnvFor(deps, entry, instance.name, instance.homeMode) });
+          ensureInstanceHome(deps.runner, rt, entry.container, instance.name, instance.homeMode);
           const outcome = term.openAgentWindow(deps.runner, entry.session, instance.window, launch, entry.root);
           deps.stdout(`${outcome} window ${instance.name} (${instance.kind})\n`);
         }
@@ -968,7 +1035,8 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     }
     case 'prune': {
       const every = rest.includes('--all');
-      const leftover = rest.filter((arg) => arg !== '--all');
+      const forksOnly = rest.includes('--forks');
+      const leftover = rest.filter((arg) => arg !== '--all' && arg !== '--forks');
       if (leftover.length > 0) throw new UsageError(`unexpected argument: ${leftover[0]}`);
       const targets: WorkspaceEntry[] = [];
       if (every) {
@@ -984,6 +1052,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         if (!entry) throw new CliError(`no registered workspace in scope: ${resolution.root}`, 1);
         targets.push(entry);
       }
+      if (forksOnly) return pruneForks(deps, registry, targets);
       const stopped: { entry: WorkspaceEntry; rt: RuntimeEngine }[] = [];
       for (const entry of targets) {
         const rt = selectRuntime(deps, entry);
