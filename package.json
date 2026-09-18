@@ -1,6 +1,6 @@
 {
   "name": "@assforge/cogent-sandbox",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "type": "module",
   "description": "Sandboxed multi-agent workbench: isolated persistent AI-agent workspaces over Docker containers and host tmux",
   "bin": {
