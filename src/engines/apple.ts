@@ -2,12 +2,10 @@
  * AppleContainerRuntimeEngine: Apple Containerization (`container` CLI)
  * as a RuntimeEngine.
  *
- * Verification ledger (macOS 26, `container --help` surface plus live
- * probes on 2026-09-18): run/create/exec/stop/start/delete/kill/cp/logs/
- * inspect/list, volume + network create/list/inspect/delete, image
- * build/list verified against the live daemon; open networks report
- * mode nat and --internal networks mode hostOnly. Live full-lifecycle
- * e2e in progress; the engine reports verified:false until it passes.
+ * Verification ledger (macOS 26, live daemon 2026-09-18): full
+ * lifecycle e2e green — build, start, exec as agent, restricted BLOCKED,
+ * open 200, stop; volume ownership handoff; nat/hostOnly modes;
+ * fast startup failure. Engine marked verified.
  */
 import type { RunResult } from '../docker.js';
 import type { ExecSpec } from './types.js';
@@ -81,7 +79,7 @@ function errorOf(result: RunResult): string {
 
 export const AppleContainerRuntimeEngine: RuntimeEngine = {
   name: 'apple',
-  verified: false,
+  verified: true,
   capabilities: APPLE_CAPABILITIES,
   doctorProbes: { binary: 'container', args: ['system', 'status'] },
   displayName: 'Apple Container',

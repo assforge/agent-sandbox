@@ -73,7 +73,7 @@ describe('apple engine vectors', () => {  it('builds container-shaped argv from 
     });
     void runner;
     expect(calls).toHaveLength(0);
-    expect(AppleContainerRuntimeEngine.verified).toBe(false);
+    expect(AppleContainerRuntimeEngine.verified).toBe(true);
     expect(AppleContainerRuntimeEngine.doctorProbes).toEqual({ binary: 'container', args: ['system', 'status'] });
   });
 
