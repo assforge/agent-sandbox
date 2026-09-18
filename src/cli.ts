@@ -46,7 +46,7 @@ export function splitForwarded(argv: string[]): { head: string[]; forwarded: str
 export function parseArgs(argv: string[]): ParsedCommand {
   const { head, forwarded } = splitForwarded(argv);
   const args = [...head];
-  const workspace = takeOption(args, ['--workspace']);
+  const workspace = takeOption(args, ['--workspace', '-w']);
   if (takeFlag(args, ['--help', '-h'])) return { kind: 'help' };
   if (takeFlag(args, ['--version', '-V'])) return { kind: 'version' };
   const noAttach = takeFlag(args, ['--no-attach']);
@@ -65,13 +65,13 @@ export function parseArgs(argv: string[]): ParsedCommand {
   }
   if (first === 'shell') {
     if (rest.length > 2) throw new UsageError('sandbox shell takes at most --name <name>');
-    const name = takeOption(rest, ['--name']);
+    const name = takeOption(rest, ['--name', '-n']);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
     if (forwarded.length > 0) throw new UsageError('sandbox shell does not forward arguments');
     return { kind: 'shell', name, workspace, noAttach };
   }
   if (first === 'doctor') {
-    const json = takeFlag(rest, ['--json']) || forwarded.includes('--json');
+    const json = takeFlag(rest, ['--json', '-j']) || forwarded.includes('--json');
     if (rest.length > 0) throw new UsageError('sandbox doctor takes no positional arguments');
     return { kind: 'doctor', json, workspace };
   }
@@ -88,7 +88,7 @@ export function parseArgs(argv: string[]): ParsedCommand {
   }
   if ((SUPPORTED_AGENTS as readonly string[]).includes(first)) {
     if (rest.length > 2) throw new UsageError(`unexpected argument: ${rest[0]} (use --name for instances, -- for agent arguments)`);
-    const name = takeOption(rest, ['--name']);
+    const name = takeOption(rest, ['--name', '-n']);
     if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]} (use -- to forward agent arguments)`);
     return { kind: 'agent', agent: first, name, workspace, forwarded, noAttach };
   }

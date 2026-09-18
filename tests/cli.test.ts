@@ -58,6 +58,13 @@ describe('parseArgs', () => {
     expect(parseArgs(['terminal', 'use', 'herder'])).toEqual({ kind: 'terminal', action: 'use', rest: ['herder'] });
   });
 
+  it('accepts short flags for frequent options', () => {
+    expect(parseArgs(['-w', '/w'])).toMatchObject({ kind: 'bare', workspace: '/w' });
+    expect(parseArgs(['claude', '-n', 'sdk'])).toMatchObject({ kind: 'agent', name: 'sdk' });
+    expect(parseArgs(['shell', '-n', 's'])).toMatchObject({ kind: 'shell', name: 's' });
+    expect(parseArgs(['doctor', '-j'])).toMatchObject({ kind: 'doctor', json: true });
+  });
+
   it('parses shell, doctor and resource groups', () => {
     expect(parseArgs(['shell', '--name', 's'])).toEqual({ kind: 'shell', name: 's', workspace: undefined, noAttach: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true, workspace: undefined });

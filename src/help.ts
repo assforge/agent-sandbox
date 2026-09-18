@@ -1,34 +1,46 @@
-const SHARED_HELP = `Prerequisites: Docker and tmux are host dependencies. Doctor reports
-remediation commands but never installs anything automatically.
+import { BUILTIN_CATALOG } from './engines/agent.js';
+
+const SHARED_HELP = `Prerequisites: a container runtime (Docker) and a terminal engine
+(tmux) on the host; see sandbox runtime help and sandbox terminal help
+for alternatives. Doctor reports remediation commands but never installs
+anything automatically.
 
 Destructive operations ask for confirmation unless --yes is given.
 Stopping a workspace keeps volumes. There is no purge command in this
 release. Processes inside one container share a user and can read one
 another's files; the isolation boundary is the container, not the
-window.`;
+window.
+
+Short flags: -w workspace, -n name, -i instance, -f file, -t tail,
+-o output, -r root, -j json, -y yes. Destructive and rare operations
+keep long-only flags on purpose.`;
+
+function agentNames(): string {
+  return BUILTIN_CATALOG.map((entry) => entry.name).join(', ');
+}
 
 export function topHelp(): string {
-  return `Usage: sandbox [--workspace <path>] [--yes] [command]
+  return `Usage: sandbox [-w <path>] [--yes] [command]
 
 Resolve the current workspace and start or reconnect its environment.
 The first window is a shell. This command never starts an agent fleet.
 
 Global options:
-  --workspace <path>   Operate on another registered workspace root.
-  --yes, -y            Answer yes to confirmation prompts. Scripts only;
-                       never combined with unreviewed destructive runs.
-  --no-attach          Open or select the window without attaching.
-                       The tmux session keeps running for later attach.
-  -h, --help           Show help. --version, -V show the version.
+  --workspace, -w <path>   Operate on another registered workspace root.
+  --yes, -y                Answer yes to confirmation prompts. Scripts only;
+                           never combined with unreviewed destructive runs.
+  --no-attach              Open or select the window without attaching.
+                           The session keeps running for later attach.
+  -h, --help               Show help. --version, -V show the version.
 
-Commands:
-  sandbox [agent] [--name <name>] [--no-attach] [-- <agent arguments...>]
+Daily use:
+  sandbox [agent] [--name, -n <name>] [--no-attach] [-- <agent arguments...>]
     Open a named agent window in this workspace. The default instance
-    name equals the agent name. Supported agents: claude, opencode,
-    codex, copilot. Arguments after -- are forwarded without reparsing.
-    Each instance gets its own credentials and HOME directory; see
+    name equals the agent name. Supported agents: ${agentNames()}.
+    Arguments after -- are forwarded without reparsing. Each instance
+    gets its own credentials and HOME directory; see
     sandbox credentials help.
-  sandbox shell [--name <name>] [--no-attach]
+  sandbox shell [--name, -n <name>] [--no-attach]
     Open a shell window in the workspace container.
   sandbox register [path]
     Register a workspace root. Defaults to the current directory.
@@ -37,50 +49,53 @@ Commands:
     Forget a workspace root after confirmation when anything is live.
     Volumes, networks, images, and credentials are always kept.
     Short for sandbox workspace unregister.
-  sandbox doctor [--json]
+  sandbox doctor [--json, -j]
     Read-only diagnostics with remediation commands.
-  sandbox workspace list [--json]
-  sandbox workspace status [--json]
-  sandbox workspace register --root <path>
+  sandbox workspace attach
+    Reconnect only; fails when the session is absent, warns when the
+    container is stopped.
+
+Workspace lifecycle:
+  sandbox workspace list [--json, -j]
+  sandbox workspace status [--json, -j]
+  sandbox workspace register --root, -r <path>
   sandbox workspace start
     Prepare the environment without attaching.
   sandbox workspace stop
     Ask for confirmation when instances are live. Keeps volumes.
-  sandbox workspace attach
-    Reconnect only; fails when the session is absent.
   sandbox workspace reopen [--no-attach]
     Recreate every registered window after a reboot. The roster in the
     registry is the source of truth; agent conversations resume with
     each CLI's own resume flags.
-  sandbox workspace logs [--tail <n>]
+  sandbox workspace logs [--tail, -t <n>]
     Show container output for debugging failed startups.
   sandbox workspace exec -- <command> [arguments...]
     Run a command in the ready container without adding a window.
     Starts a stopped container first and propagates the exit status.
   sandbox workspace configure [--add-mount <p> | --drop-mount <p> | --network open|restricted]
     Show redacted configuration, or change it with explicit approval.
-  sandbox workspace backup --output <path>
+  sandbox workspace backup --output, -o <path>
   sandbox workspace restore --input <path>
     Restore refuses backups recorded for another workspace.
   sandbox workspace migrate --source claude-relay [--apply]
     Dry-run by default; originals are always retained.
-  sandbox credentials list [--json]
-  sandbox credentials show --instance <name>
+
+Instances and credentials:
+  sandbox credentials list [--json, -j]
+  sandbox credentials show --instance, -i <name>
     Key names only; values are never printed.
-  sandbox credentials set --instance <name> --file <path>
+  sandbox credentials set --instance, -i <name> --file, -f <path>
     Store KEY=VALUE lines host-side with owner-only permissions.
     Secrets are never accepted as command-line arguments.
-  sandbox credentials clear --instance <name>
-  sandbox runtime list [--json]
-  sandbox runtime use <name>
-  sandbox terminal list [--json]
-  sandbox terminal use <name>
-  sandbox agent list [--json]
-  sandbox agent outdated [--json]
+  sandbox credentials clear --instance, -i <name>
+
+Agents and images:
+  sandbox agent list [--json, -j]
+  sandbox agent outdated [--json, -j]
   sandbox agent upgrade <agent|all>
     Builds a verified candidate only; activate explicitly afterwards.
     Running sessions are never restarted implicitly.
-  sandbox image list [--json]
+  sandbox image list [--json, -j]
   sandbox image build
   sandbox image activate <digest>
     Ask for confirmation when instances are live; recreates the
@@ -88,6 +103,12 @@ Commands:
   sandbox image rollback <digest>
     Ask for confirmation when instances are live. Does not reverse
     a data migration.
+
+Pluggable engines:
+  sandbox runtime list [--json, -j]
+  sandbox runtime use <name>
+  sandbox terminal list [--json, -j]
+  sandbox terminal use <name>
   sandbox --help
   sandbox --version
 
@@ -96,9 +117,9 @@ ${SHARED_HELP}
 }
 
 export function agentHelp(): string {
-  return `Usage: sandbox <agent> [--name <name>] [--no-attach] [-- <agent arguments...>]
+  return `Usage: sandbox <agent> [--name, -n <name>] [--no-attach] [-- <agent arguments...>]
 
-Supported agents: claude, opencode, codex, copilot.
+Supported agents: ${agentNames()} (see sandbox agent list for the live registry).
 
 An existing matching instance is selected. An occupied name of another
 kind is rejected. Additional instances require distinct names.
@@ -119,13 +140,14 @@ Actions: list, status, register, unregister, start, stop, attach, reopen,
 logs, exec, configure, backup, restore, migrate.
 
 start prepares the environment without attaching. attach only reconnects
-and fails when the environment is absent. SSH into the host and attach
-from there: the session switches to the new client with no nested
-session, and the environment passes through untouched. reopen recreates
-every registered window, which is the recovery path after a host reboot.
-stop requires confirmation when instances are live, stops only managed
-resources for this workspace, and keeps volumes. exec starts a stopped
-container first. restore refuses foreign backups.
+and fails when the environment is absent; it warns when the container
+is stopped. SSH into the host and attach from there: the session
+switches to the new client with no nested session, and the environment
+passes through untouched. reopen recreates every registered window,
+which is the recovery path after a host reboot. stop requires
+confirmation when instances are live, stops only managed resources for
+this workspace, and keeps volumes. exec starts a stopped container
+first. restore refuses foreign backups.
 
 ${SHARED_HELP}
 `;
@@ -148,8 +170,8 @@ ${SHARED_HELP}
 export function credentialsHelp(): string {
   return `Usage: sandbox credentials <action>
 
-Actions: list, show, set, clear. All actions take --instance <name>;
-set additionally takes --file <path> with KEY=VALUE lines.
+Actions: list, show, set, clear. All actions take --instance, -i <name>;
+set additionally takes --file, -f <path> with KEY=VALUE lines.
 
 Credential files live host-side under ~/.sandbox/<workspace>/ and are
 injected as process environment only into that instance's window. They
