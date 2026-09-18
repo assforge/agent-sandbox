@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { rejectForbiddenMount } from './config.js';
+import { sandboxDir } from './paths.js';
 
 export interface InstanceEntry {
   name: string;
@@ -65,7 +66,7 @@ export function networkName(workspaceIdValue: string): string {
 }
 
 export function defaultRegistryPath(homeDir: string): string {
-  return join(homeDir, '.sandbox', 'registry.json');
+  return join(sandboxDir(homeDir), 'registry.json');
 }
 
 export function loadRegistry(registryPath: string): Registry {

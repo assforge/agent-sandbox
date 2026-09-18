@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { sandboxDir } from './paths.js';
+
 export interface HostConfig {
   runtime: string;
   terminal: string;
@@ -10,7 +12,7 @@ export const DEFAULT_RUNTIME = 'docker';
 export const DEFAULT_TERMINAL = 'tmux';
 
 export function hostConfigPath(homeDir: string): string {
-  return join(homeDir, '.sandbox', 'config.json');
+  return join(sandboxDir(homeDir), 'config.json');
 }
 
 /** Host-level defaults. Missing or partial files fall back to defaults field by field. */
@@ -33,6 +35,6 @@ export function loadHostConfig(homeDir: string): HostConfig {
 }
 
 export function saveHostConfig(homeDir: string, config: HostConfig): void {
-  mkdirSync(join(homeDir, '.sandbox'), { recursive: true });
+  mkdirSync(sandboxDir(homeDir), { recursive: true });
   writeFileSync(hostConfigPath(homeDir), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 }

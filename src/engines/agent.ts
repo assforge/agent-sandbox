@@ -7,6 +7,8 @@
 import { join } from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 
+import { sandboxDir } from '../paths.js';
+
 export type AgentInstallChannel = 'npm' | 'native';
 
 export interface AgentInstallSpec {
@@ -141,9 +143,9 @@ export function agentEngines(extraCatalog: AgentCatalogEntry[] = []): Map<string
   return registry;
 }
 
-/** User-supplied catalog documents under ~/.sandbox/engines/*.json. */
+/** User-supplied catalog documents under ~/.agent.sandbox/engines/*.json. */
 export function userEnginesDir(homeDir: string): string {
-  return join(homeDir, '.sandbox', 'engines');
+  return join(sandboxDir(homeDir), 'engines');
 }
 
 /** Load every user catalog document. An invalid file fails closed with its path. */

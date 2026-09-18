@@ -329,7 +329,7 @@ describe('workspace lifecycle flows', () => {
     const { home, root, world, deps, out } = setup();
     try {
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
-      const afterRegister = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const afterRegister = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(afterRegister.workspaces)[0] as string;
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
@@ -394,7 +394,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
-      const registry = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       const before = world.containers.get(`sandbox-${id}`);
       expect(before?.running).toBe(true);
@@ -431,7 +431,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['workspace', 'configure', '--workspace', root, '--network', 'restricted'], deps)).toBe(0);
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
-      const registry = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       const net = `sandbox-net-${id}`;
       expect(world.networks.has(net)).toBe(true);
@@ -505,7 +505,7 @@ describe('workspace lifecycle flows', () => {
       const cwdDeps = { ...deps, cwd: root };
       expect(await main(['register'], cwdDeps)).toBe(0);
       expect(out.join('')).toContain('registered');
-      expect(loadRegistry(join(home, '.sandbox', 'registry.json')).workspaces).not.toEqual({});
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces).not.toEqual({});
       expect(await main(['register', join(home, 'no-such-dir')], cwdDeps)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -524,7 +524,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['unregister', root], deny)).toBe(1);
       expect(await main(['unregister', root], deps)).toBe(0);
       expect(out.join('')).toContain('unregistered');
-      expect(loadRegistry(join(home, '.sandbox', 'registry.json')).workspaces).toEqual({});
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces).toEqual({});
       expect(world.volumes.size).toBeGreaterThan(0);
       expect(world.containers.size).toBe(0);
       expect(await main(['workspace', 'unregister', '--workspace', root], deps)).toBe(1);
@@ -656,7 +656,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
       expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
       expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
-      const registry = loadRegistry(join(home, '.sandbox', 'registry.json'));
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       world.sessions.get(`sandbox-${id}`)?.set('codex', false);
       expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);

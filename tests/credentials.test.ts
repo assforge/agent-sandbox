@@ -34,7 +34,7 @@ describe('credential store', () => {
     try {
       const keys = setCredentials(home, 'w-abc', 'w1', 'ANTHROPIC_BASE_URL=https://a.example\nANTHROPIC_AUTH_TOKEN=secret-1\n');
       expect(keys).toEqual(['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
-      const stored = join(home, '.sandbox', 'w-abc', 'instances', 'w1.env');
+      const stored = join(home, '.agent.sandbox', 'w-abc', 'instances', 'w1.env');
       expect(statSync(stored).mode & 0o777).toBe(0o600);
       expect(loadCredentials(home, 'w-abc', 'w1')).toEqual({
         ANTHROPIC_BASE_URL: 'https://a.example',

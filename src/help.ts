@@ -174,7 +174,7 @@ export function credentialsHelp(): string {
 Actions: list, show, set, clear. All actions take --instance, -i <name>;
 set additionally takes --file, -f <path> with KEY=VALUE lines.
 
-Credential files live host-side under ~/.sandbox/<workspace>/ and are
+Credential files live host-side under ~/.agent.sandbox/<workspace>/ and are
 injected as process environment only into that instance's window. They
 are never accepted as command-line arguments, never baked into images,
 and never printed: show displays key names with masked values.

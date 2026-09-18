@@ -40,6 +40,7 @@ import {
   type WorkspaceEntry,
 } from '../registry.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
+import { migrateHomeDir, sandboxDir } from '../paths.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, credentialsHelp, imageHelp, runtimeHelp, terminalHelp, topHelp, workspaceHelp } from '../help.js';
 
@@ -125,7 +126,7 @@ export function realDeps(assumeYes: boolean): MainDeps {
   return {
     cwd: process.cwd(),
     homeDir: homedir(),
-    lockDir: `${homedir()}/.sandbox/locks`,
+    lockDir: join(sandboxDir(homedir()), 'locks'),
     platform: process.platform,
     nodeVersion: process.version,
     pathLookup: (name: string): string | null => {
@@ -257,6 +258,9 @@ export async function main(argv: string[], deps: MainDeps): Promise<number> {
 }
 
 async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
+  if (migrateHomeDir(deps.homeDir)) {
+    deps.stderr('sandbox home moved from ~/.sandbox to ~/.agent.sandbox\n');
+  }
   const parsed = parseArgs(argv);
   const agents = agentRegistry(deps);
   switch (parsed.kind) {

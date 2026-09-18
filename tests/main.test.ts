@@ -58,7 +58,7 @@ describe('main', () => {
       expect(await main(['doctor'], d)).toBe(0);
       expect(d.out.join('')).toContain('[WARN]');
       const registry = emptyRegistry();
-      saveRegistry(join(home, '.sandbox', 'registry.json'), registry);
+      saveRegistry(join(home, '.agent.sandbox', 'registry.json'), registry);
       const d2 = deps({ homeDir: home, cwd: join(home, 'proj') });
       expect(await main(['doctor', '--json'], d2)).toBe(0);
       expect(JSON.parse(d2.out.join('')) as unknown).toHaveProperty('checks');
@@ -71,7 +71,7 @@ describe('main', () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
     try {
       writeFileSync(join(home, 'registry.json'), '{broken', 'utf8');
-      const nested = join(home, '.sandbox');
+      const nested = join(home, '.agent.sandbox');
       mkdirSync(nested, { recursive: true });
       renameSync(join(home, 'registry.json'), join(nested, 'registry.json'));
       const d = deps({ homeDir: home });
@@ -86,6 +86,20 @@ describe('main', () => {
     expect(await main(['workspace', 'help'], deps())).toBe(0);
     expect(await main(['agent', 'help'], deps())).toBe(0);
     expect(await main(['image', 'help'], deps())).toBe(0);
+  });
+
+  it('migrates the legacy home directory before dispatch', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
+    try {
+      mkdirSync(join(home, '.sandbox'), { recursive: true });
+      const d = deps({ homeDir: home });
+      expect(await main(['--version'], d)).toBe(0);
+      expect(d.err.join('')).toContain('sandbox home moved from ~/.sandbox to ~/.agent.sandbox');
+      expect(existsSync(join(home, '.agent.sandbox'))).toBe(true);
+      expect(existsSync(join(home, '.sandbox'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
