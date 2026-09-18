@@ -137,18 +137,22 @@ ${SHARED_HELP}
 export function workspaceHelp(): string {
   return `Usage: sandbox workspace <action>
 
-Actions: list, status, register, unregister, start, stop, attach, reopen,
-logs, exec, configure, backup, restore, migrate.
+Actions: list, status, register, unregister, start, stop, restart,
+upgrade, attach, reopen, logs, exec, configure, mount, unmount,
+backup, restore, migrate.
 
 start prepares the environment without attaching. attach only reconnects
 and fails when the environment is absent; it warns when the container
 is stopped. SSH into the host and attach from there: the session
 switches to the new client with no nested session, and the environment
 passes through untouched. reopen recreates every registered window,
-which is the recovery path after a host reboot. stop requires
-confirmation when instances are live, stops only managed resources for
-this workspace, and keeps volumes. exec starts a stopped container
-first. restore refuses foreign backups.
+which is the recovery path after a host reboot. stop and restart require
+confirmation when instances are live; restart stops and brings the same
+image back. upgrade [agent|all] resolves latest versions, skips the build
+when everything is current, and otherwise builds, activates, and recreates
+in one confirmed step. mount and unmount are short forms of configure
+--add-mount and --drop-mount that apply on next start. stop keeps volumes.
+exec starts a stopped container first. restore refuses foreign backups.
 
 ${SHARED_HELP}
 `;
