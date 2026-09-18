@@ -120,6 +120,19 @@ export function networkInternal(runner: CommandRunner, network: string): boolean
 
 export function createContainer(runner: CommandRunner, entry: { id: string; container: string; root: string }, options: CreateOptions): void {
   ensureVolume(runner, options.homeVolume, entry.id);
+  // Migrated state keeps its old numeric UID and fresh Apple volumes
+  // arrive root-owned (the apple runtime repairs at the same point):
+  // hand the home tree to the agent user with full capabilities before
+  // the cap-dropped container starts. The entrypoint itself can never
+  // do this (CAP_CHOWN is dropped).
+  const owned = runner.run('docker', [
+    'run', '--rm', '--user', 'root', '--entrypoint', 'chown',
+    '-v', `${options.homeVolume}:/home/agent`,
+    options.image, '-R', 'agent:agent', '/home/agent',
+  ]);
+  if (owned.status !== 0) {
+    throw new Error(`cannot prepare home volume ${options.homeVolume}: ${owned.stderr.trim()}`);
+  }
   const args = [
     'run', '-d', '--pull', 'never', '--cap-drop', 'ALL', '--network', options.network, '--name', entry.container,
     '--label', MANAGED_LABEL, '--label', workspaceLabel(entry.id), '--label', `sandbox.runtime=${options.runtimeName}`,
