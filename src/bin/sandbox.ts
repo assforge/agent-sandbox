@@ -53,7 +53,7 @@ export class CliError extends Error {
   }
 }
 
-// Engine selection: host-level default from ~/.sandbox/config.json with
+// Engine selection: host-level default from ~/.agent.sandbox/config.json with
 // per-workspace override recorded on the entry. Unknown names fail closed.
 function selectRuntime(deps: MainDeps, entry?: WorkspaceEntry): RuntimeEngine {
   const wanted = entry?.runtime ?? loadHostConfig(deps.homeDir).runtime;
@@ -75,6 +75,101 @@ function selectTerminal(deps: MainDeps, entry?: WorkspaceEntry): TerminalEngine 
     throw new CliError(`unknown terminal engine: ${wanted}; run: sandbox terminal list`, 2);
   }
   return engine;
+}
+
+interface ResolvedAgentVersion {
+  def: AgentEngine;
+  key: string;
+  pinned: string;
+  latest: string;
+}
+
+/** Resolve latest versions for engine defs, printing the per-engine lines. */
+function resolveAgentVersions(deps: MainDeps, defs: AgentEngine[], versionQueries: VersionRunner): ResolvedAgentVersion[] {
+  const resolved: ResolvedAgentVersion[] = [];
+  for (const def of defs) {
+    const spec = def.installSpec();
+    if (!spec.pinnedVersion) {
+      deps.stdout(`${def.name} has no pinned version and cannot be upgraded\n`);
+      continue;
+    }
+    const latest = def.latestVersion(versionQueries);
+    if (!latest) {
+      deps.stdout(`${def.name}: latest unknown, keeping pinned ${spec.pinnedVersion}\n`);
+      continue;
+    }
+    resolved.push({ def, key: spec.npmPackage ?? def.name, pinned: spec.pinnedVersion, latest });
+    deps.stdout(`${def.name}: pinned ${spec.pinnedVersion}, latest ${latest}\n`);
+  }
+  return resolved;
+}
+
+/** Build a verified upgrade candidate from version overrides. */
+function buildUpgradeCandidate(
+  deps: MainDeps,
+  rt: RuntimeEngine,
+  agents: Iterable<AgentEngine>,
+  overrides: Record<string, string>,
+  tag: string,
+): { tag: string } {
+  const contextDir = new URL('../../templates', import.meta.url).pathname;
+  return buildCandidate(
+    {
+      buildImage: (plan) => {
+        try {
+          return rt.buildImage(deps.runner, plan);
+        } catch (error) {
+          throw new CliError((error as Error).message, 1);
+        }
+      },
+      inspectBinaryVersions: (candidate) => {
+        const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'claude --version; opencode --version; codex --version; copilot --version']);
+        const versions: Record<string, string> = {};
+        const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+        if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
+        if (lines[1]) versions['opencode-ai'] = lines[1];
+        if (lines[2]) versions['@openai/codex'] = lines[2].replace(/^codex-cli /, '');
+        if (lines[3]) versions['@github/copilot'] = lines[3].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
+        return versions;
+      },
+      verifyCandidate: (candidate) => {
+        const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'upgrade-verify', SANDBOX_CONFIG_FINGERPRINT: 'verify' }, ['sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
+        return probed.status === 0;
+      },
+    },
+    contextDir,
+    tag,
+    agents,
+    overrides,
+  );
+}
+
+/** Canonicalize and vet a mount path. Shared by configure/mount. Throws on refusal. */
+function vettedMount(deps: MainDeps, path: string): string {
+  const canonical = defaultCanonicalize(path);
+  const problem = rejectForbiddenMount(canonical, deps.homeDir);
+  if (problem) throw new CliError(`refused mount ${canonical}: ${problem}`, 2);
+  return canonical;
+}
+
+/** Drop a mount, refusing the workspace root. Shared by configure/unmount. */
+function dropMountFromEntry(entry: WorkspaceEntry, path: string): void {
+  const canonicalDrop = defaultCanonicalize(path);
+  if (normalizeLexical(canonicalDrop) === normalizeLexical(entry.root)) {
+    throw new CliError(`cannot drop the workspace root mount: ${entry.root}`, 2);
+  }
+  entry.mounts = entry.mounts.filter((mount) => normalizeLexical(mount) !== normalizeLexical(canonicalDrop));
+}
+
+/** Resolve engine defs by name, failing with exit 1 on unknown agents. */
+function resolveAgentDefs(agents: Map<string, AgentEngine>, names: string[]): AgentEngine[] {
+  return names.map((name) => {
+    try {
+      return agentEngine(agents, name);
+    } catch (error) {
+      throw new CliError((error as Error).message, 1);
+    }
+  });
 }
 
 export interface MainDeps {
@@ -565,6 +660,58 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         handle.release();
       }
     }
+    case 'restart': {
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const rt = selectRuntime(deps, entry);
+      if (entry.instances.length > 0) {
+        const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Restart?`);
+        if (!approved) throw new CliError('restart cancelled; nothing was changed', 1);
+      }
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        stopWorkspace(deps.runner, rt, entry);
+        ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
+        deps.stdout(`workspace ${entry.id} restarted (container ${entry.container})\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
+    case 'upgrade': {
+      const target = rest[0] ?? 'all';
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const agents = agentRegistry(deps);
+      const names = target === 'all' ? [...agents.keys()] : [target];
+      const versionQueries = makeVersionRunner(deps);
+      const resolved = resolveAgentVersions(deps, resolveAgentDefs(agents, names), versionQueries);
+      const drifted = resolved.filter((item) => item.latest !== item.pinned);
+      if (drifted.length === 0) {
+        deps.stdout('every agent is already at its latest version; nothing to build\n');
+        return 0;
+      }
+      if (entry.instances.length > 0) {
+        const approved = await deps.confirm(
+          `${entry.instances.length} live instances will be interrupted. Rebuild agents and recreate the container?`,
+        );
+        if (!approved) throw new CliError('upgrade cancelled; nothing was changed', 1);
+      }
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        const rt = selectRuntime(deps, entry);
+        const overrides: Record<string, string> = {};
+        for (const item of drifted) overrides[item.key] = item.latest;
+        const tag = `sandbox-workspace:upgrade-${Date.now()}`;
+        const built = buildUpgradeCandidate(deps, rt, agents.values(), overrides, tag);
+        activateImage(entry, built.tag);
+        saveRegistry(registryPathOf(deps), registry);
+        stopWorkspace(deps.runner, rt, entry);
+        ensureReady(deps.runner, rt, entry, { image: built.tag });
+        deps.stdout(`workspace ${entry.id} upgraded to ${built.tag} (container ${entry.container})\n`);
+        return 0;
+      } finally {
+        handle.release();
+      }
+    }
     case 'attach': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
@@ -668,9 +815,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         return 0;
       }
       if (addMount) {
-        const canonical = defaultCanonicalize(addMount);
-        const problem = rejectForbiddenMount(canonical, deps.homeDir);
-        if (problem) throw new CliError(`refused mount ${canonical}: ${problem}`, 2);
+        const canonical = vettedMount(deps, addMount);
         deps.stdout(`plan: add mount ${canonical} to ${entry.id}\n`);
       }
       if (dropMount) deps.stdout(`plan: drop mount ${dropMount} from ${entry.id}\n`);
@@ -690,13 +835,36 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (runtime !== undefined) entry.runtime = runtime;
       if (terminal !== undefined) entry.terminal = terminal;
       if (dropMount) {
-        const canonicalDrop = defaultCanonicalize(dropMount);
-        if (normalizeLexical(canonicalDrop) === normalizeLexical(entry.root)) {
-          throw new CliError(`cannot drop the workspace root mount: ${entry.root}`, 2);
-        }
-        entry.mounts = entry.mounts.filter((mount) => normalizeLexical(mount) !== normalizeLexical(canonicalDrop));
+        dropMountFromEntry(entry, dropMount);
       }
       saveRegistry(registryPathOf(deps), registry);
+      return 0;
+    }
+    case 'mount': {
+      const path = rest[0];
+      if (!path) throw new UsageError('workspace mount requires <path>');
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      const canonical = vettedMount(deps, path);
+      if (entry.mounts.includes(canonical)) {
+        deps.stdout(`mount ${canonical} is already present on ${entry.id}\n`);
+        return 0;
+      }
+      const approved = await deps.confirm(`add mount ${canonical} to ${entry.id}? Applies on next start.`);
+      if (!approved) throw new CliError('mount cancelled; nothing was changed', 1);
+      entry.mounts.push(canonical);
+      saveRegistry(registryPathOf(deps), registry);
+      deps.stdout(`mount ${canonical} added to ${entry.id}; applies on next start\n`);
+      return 0;
+    }
+    case 'unmount': {
+      const path = rest[0];
+      if (!path) throw new UsageError('workspace unmount requires <path>');
+      const entry = await resolveAndEnsure(deps, registry, workspace);
+      dropMountFromEntry(entry, path);
+      const approved = await deps.confirm(`drop mount ${path} from ${entry.id}? Applies on next start.`);
+      if (!approved) throw new CliError('unmount cancelled; nothing was changed', 1);
+      saveRegistry(registryPathOf(deps), registry);
+      deps.stdout(`mount ${path} dropped from ${entry.id}; applies on next start\n`);
       return 0;
     }
     case 'backup': {
@@ -888,61 +1056,13 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
       if (!target) throw new UsageError('agent upgrade requires <agent|all>');
       const rt = selectRuntime(deps);
       const names = target === 'all' ? [...agents.keys()] : [target];
-      const overrides: Record<string, string> = {};
       const versionQueries = makeVersionRunner(deps);
-      const defs = names.map((name) => {
-        try {
-          return agentEngine(agents, name);
-        } catch (error) {
-          throw new CliError((error as Error).message, 1);
-        }
-      });
-      for (const def of defs) {
-        const spec = def.installSpec();
-        if (!spec.pinnedVersion) {
-          deps.stdout(`${def.name} has no pinned version and cannot be upgraded\n`);
-          continue;
-        }
-        const latest = def.latestVersion(versionQueries);
-        if (!latest) {
-          deps.stdout(`${def.name}: latest unknown, keeping pinned ${spec.pinnedVersion}\n`);
-          continue;
-        }
-        overrides[spec.npmPackage ?? def.name] = latest;
-        deps.stdout(`${def.name}: pinned ${spec.pinnedVersion}, latest ${latest}\n`);
-      }
+      const resolved = resolveAgentVersions(deps, resolveAgentDefs(agents, names), versionQueries);
+      const overrides: Record<string, string> = {};
+      for (const item of resolved) overrides[item.key] = item.latest;
       if (Object.keys(overrides).length === 0) return 0;
-      const contextDir = new URL('../../templates', import.meta.url).pathname;
       const tag = `sandbox-workspace:upgrade-${Date.now()}`;
-      const built = buildCandidate(
-        {
-          buildImage: (plan) => {
-            try {
-              return rt.buildImage(deps.runner, plan);
-            } catch (error) {
-              throw new CliError((error as Error).message, 1);
-            }
-          },
-          inspectBinaryVersions: (candidate) => {
-            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', 'claude --version; opencode --version; codex --version; copilot --version']);
-            const versions: Record<string, string> = {};
-            const lines = probed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-            if (lines[0]) versions['claude'] = (lines[0]?.split(' ')[0] as string);
-            if (lines[1]) versions['opencode-ai'] = lines[1];
-            if (lines[2]) versions['@openai/codex'] = lines[2].replace(/^codex-cli /, '');
-            if (lines[3]) versions['@github/copilot'] = lines[3].replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
-            return versions;
-          },
-          verifyCandidate: (candidate) => {
-            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'upgrade-verify', SANDBOX_CONFIG_FINGERPRINT: 'verify' }, ['sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
-            return probed.status === 0;
-          },
-        },
-        contextDir,
-        tag,
-        agents.values(),
-        overrides,
-      );
+      const built = buildUpgradeCandidate(deps, rt, agents.values(), overrides, tag);
       deps.stdout(`upgrade candidate ${built.tag} verified; running sessions are untouched.\nActivate explicitly with: sandbox image activate ${built.tag}\n`);
       return 0;
     }

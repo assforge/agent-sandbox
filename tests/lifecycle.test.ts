@@ -18,6 +18,7 @@ class FakeWorld {
   images = new Set<string>(['sandbox-workspace:current']);
   failBuild = false;
   lastBuildArgs: Record<string, string> = {};
+  curlText = '2.1.277\n';
 
   imageIdOf = (image: string): string => {
     const alnum = image.replace(/[^a-zA-Z0-9]/g, '');
@@ -41,7 +42,7 @@ class FakeWorld {
     if (command === 'docker') return this.docker(args);
     if (command === 'tmux') return this.tmux(args);
     if (command === 'npm') return this.npm(args);
-    if (command === 'curl') return { status: 0, stdout: '2.1.277\n', stderr: '' };
+    if (command === 'curl') return { status: 0, stdout: this.curlText, stderr: '' };
     return { status: 0, stdout: '', stderr: '' };
   };
 
@@ -210,6 +211,10 @@ class FakeWorld {
     }
     if (verb === 'build') {
       if (this.failBuild) return { status: 1, stdout: 'STEP 3/9 failed\nboom\n', stderr: 'error' };
+      const tagIndex = args.indexOf('-t');
+      if (tagIndex >= 0 && typeof args[tagIndex + 1] === 'string') {
+        this.images.add(args[tagIndex + 1] as string);
+      }
       this.lastBuildArgs = {};
       for (let i = 0; i < args.length; i += 1) {
         if (args[i] === '--build-arg' && typeof args[i + 1] === 'string') {
@@ -418,6 +423,80 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['agent', 'upgrade', 'all'], deps)).toBe(0);
       expect(out.join('')).toContain('claude: pinned 2.1.276, latest 2.1.277');
       expect(await main(['agent', 'upgrade', 'nope'], deps)).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('restarts with a single confirmation and resolves the workspace from cwd', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, cwd: root, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], counting)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current'], counting)).toBe(0);
+      expect(await main(['workspace', 'start'], counting)).toBe(0);
+      expect(await main(['codex', '--no-attach'], counting)).toBe(0);
+      expect(await main(['workspace', 'restart'], counting)).toBe(0);
+      expect(confirms).toBe(1);
+      expect(out.join('')).toContain('restarted');
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      expect(world.containers.get(`sandbox-${id}`)?.running).toBe(true);
+      expect(await main(['workspace', 'status'], counting)).toBe(0);
+      expect(out.join('')).toContain(id);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('upgrades drifted agents in one confirmed step and skips current ones', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], counting)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], counting)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], counting)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], counting)).toBe(0);
+      expect(await main(['workspace', 'upgrade', '--workspace', root], counting)).toBe(0);
+      expect(confirms).toBe(1);
+      expect(out.join('')).toContain('claude: pinned 2.1.276, latest 2.1.277');
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const upgraded = registry.workspaces[id]?.image ?? '';
+      expect(upgraded.startsWith('sandbox-workspace:upgrade-')).toBe(true);
+      expect(world.containers.get(`sandbox-${id}`)?.running).toBe(true);
+      world.curlText = '2.1.276\n';
+      expect(await main(['workspace', 'upgrade', '--workspace', root], counting)).toBe(0);
+      expect(out.join('')).toContain('already at its latest version');
+      expect(confirms).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('mounts and unmounts extra paths with the root guard shared', async () => {
+    const { home, root, deps, out } = setup();
+    try {
+      const extra = mkdtempSync(join(tmpdir(), 'sandbox-mnt-'));
+      try {
+        expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+        expect(await main(['workspace', 'mount', extra, '--workspace', root], deps)).toBe(0);
+        expect(out.join('')).toContain('applies on next start');
+        expect(await main(['workspace', 'mount', extra, '--workspace', root], deps)).toBe(0);
+        expect(out.join('')).toContain('already present');
+        expect(await main(['workspace', 'unmount', extra, '--workspace', root], deps)).toBe(0);
+        expect(await main(['workspace', 'unmount', root, '--workspace', root], deps)).toBe(2);
+        const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+        const id = Object.keys(registry.workspaces)[0] as string;
+        expect(registry.workspaces[id]?.mounts).not.toContain(extra);
+      } finally {
+        rmSync(extra, { recursive: true, force: true });
+      }
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
