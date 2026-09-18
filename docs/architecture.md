@@ -203,3 +203,10 @@ same-path binds; the workspace root itself can never be dropped.
 Developed and verified on macOS with Docker Desktop and tmux. Linux
 hosts are expected to work but are not verified in CI. Windows is not
 supported. Containers are always Linux.
+
+## 11. Npm release
+
+Releases after 0.22.1 go through changesets (`npm run changeset`,
+`npm run version`, `npm run release`) on `main`, matching dockyard /
+agent-slate / agent-daemon. Access is restricted GitHub Packages.
+Do not hand-edit `package.json` version.

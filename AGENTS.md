@@ -22,6 +22,7 @@ over Docker containers and host tmux sessions. Npm package
 - Doctor is read-only and never installs anything automatically.
 - No test may touch the `pedantic_snyder` container or `claude-relay-config` volume.
 - No paid provider prompt is required for generic lifecycle tests.
+- Version and publish through changesets (`npm run changeset` / `version` / `release`). Do not hand-edit `package.json` version.
 
 See `.agent.workspace/tasks/254_cogent_sandbox_cli/architecture.md` in the
 microsb governance workspace for the frozen design.

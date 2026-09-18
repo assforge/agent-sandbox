@@ -44,6 +44,18 @@ sandbox workspace exec -- npm ci --prefix /tmp/party
 sandbox workspace exec -- npm --prefix /tmp/party test
 ```
 
+## Release
+
+Version with changesets, same shape as dockyard / agent-slate / agent-daemon.
+
+```sh
+npm run changeset    # record a pending bump after a user-facing change
+npm run version      # consume pending files, bump package.json, write CHANGELOG
+npm run release      # publish to GitHub Packages (restricted)
+```
+
+Do not hand-edit `package.json` version. See `.changeset/README.md`.
+
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md) — resource model, engine
