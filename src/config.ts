@@ -42,6 +42,12 @@ export function redactedConfig(entry: WorkspaceEntry): Record<string, unknown> {
     runtime: entry.runtime,
     terminal: entry.terminal,
     mounts: entry.mounts,
-    instances: entry.instances.map((instance) => ({ name: instance.name, kind: instance.kind, window: instance.window })),
+    forks: entry.forks,
+    instances: entry.instances.map((instance) => ({
+      name: instance.name,
+      kind: instance.kind,
+      window: instance.window,
+      ...(instance.homeMode === undefined ? {} : { homeMode: instance.homeMode }),
+    })),
   };
 }
