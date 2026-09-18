@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { main, hasGitDir, type MainDeps } from '../src/bin/sandbox.js';
+import { main, hasGitDir, reattachOrHint, type MainDeps } from '../src/bin/sandbox.js';
 import { emptyRegistry, saveRegistry } from '../src/registry.js';
+import type { TerminalEngine } from '../src/engines/terminal.js';
 
 function deps(overrides: Partial<MainDeps> = {}): MainDeps & { out: string[]; err: string[] } {
   const out: string[] = [];
@@ -163,6 +164,22 @@ describe('main', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it('turns a terminal-less attach failure into an actionable message', () => {
+    const d = deps();
+    const deadTerm = { reattach: () => { throw new Error('open terminal failed: not a terminal'); } } as unknown as TerminalEngine;
+    try {
+      reattachOrHint(d, deadTerm, 'sandbox-demo');
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).toContain('the window is ready');
+      expect((error as Error).message).toContain('sandbox workspace attach');
+    }
+    let attached = 0;
+    const liveTerm = { reattach: () => { attached += 1; } } as unknown as TerminalEngine;
+    reattachOrHint(d, liveTerm, 'sandbox-demo');
+    expect(attached).toBe(1);
   });
 });
 
