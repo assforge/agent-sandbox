@@ -95,6 +95,7 @@ Agents and images:
   sandbox agent upgrade <agent|all>
     Builds a verified candidate only; activate explicitly afterwards.
     Running sessions are never restarted implicitly.
+    claude tracks the vendor release feed; the rest track npm.
   sandbox image list [--json, -j]
   sandbox image build
   sandbox image activate <digest>

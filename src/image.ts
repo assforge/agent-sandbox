@@ -25,10 +25,12 @@ export function buildCandidate(
   const expected: Record<string, string> = {};
   for (const engine of engines) {
     const spec = engine.installSpec();
-    if (spec.channel !== 'npm' || !spec.npmPackage || !spec.pinnedVersion) continue;
-    const version = versionOverrides[spec.npmPackage] ?? spec.pinnedVersion;
+    if (!spec.pinnedVersion) continue;
+    const version = (spec.npmPackage ? versionOverrides[spec.npmPackage] : undefined)
+      ?? versionOverrides[engine.name]
+      ?? spec.pinnedVersion;
     buildArgs[`${engine.name.toUpperCase()}_VERSION`] = version;
-    expected[spec.npmPackage] = version;
+    expected[spec.npmPackage ?? engine.name] = version;
   }
   const tag = runner.buildImage({ contextDir, tag: candidateTag, buildArgs });
   const versions = runner.inspectBinaryVersions(tag);

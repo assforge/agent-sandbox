@@ -28,16 +28,18 @@ describe('agents', () => {
     const entries = outdatedEngines({
       installedVersion: (pkg) => (pkg === 'opencode-ai' ? '1.18.0' : null),
       latestVersion: () => '9.9.9',
+      fetchText: () => '9.9.9',
     }, engines.values());
-    expect(entries).toHaveLength(3);
-    expect(entries[0]).toMatchObject({ agent: 'opencode', pinned: '1.18.31' });
+    expect(entries).toHaveLength(4);
+    expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, pinned: '2.1.276', latest: '9.9.9' });
+    expect(entries[1]).toMatchObject({ agent: 'opencode', pinned: '1.18.31' });
     expect(() => agentEngine(engines, 'agy')).toThrow(/no verified linux install channel/);
-    const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null }, engines.values());
+    const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
   });
 
   it('adds a fifth agent through data alone', () => {
-    const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: null }]);
+    const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: '9.9.9', latestEndpoint: null }]);
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
     expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.154.0');
   });
@@ -92,6 +94,7 @@ describe('image lifecycle', () => {
           return plan.tag;
         },
         inspectBinaryVersions: () => ({
+          claude: '2.1.276',
           'opencode-ai': '1.18.31',
           '@openai/codex': '0.154.0',
           '@github/copilot': '1.0.85',
@@ -115,7 +118,7 @@ describe('image lifecycle', () => {
     };
     expect(() => buildCandidate(runner, '/ctx', 't', agentEngines().values())).toThrow(/expected/);
     expect(() =>
-      buildCandidate({ ...runner, inspectBinaryVersions: () => ({ 'opencode-ai': '0.0.0' }) }, '/ctx', 't', agentEngines().values()),
+      buildCandidate({ ...runner, inspectBinaryVersions: () => ({ claude: '2.1.276', 'opencode-ai': '0.0.0' }) }, '/ctx', 't', agentEngines().values()),
     ).toThrow(/0\.0\.0/);
   });
 
@@ -125,6 +128,7 @@ describe('image lifecycle', () => {
         {
           buildImage: (plan: { tag: string }) => plan.tag,
           inspectBinaryVersions: () => ({
+            claude: '2.1.276',
             'opencode-ai': '1.18.31',
             '@openai/codex': '0.154.0',
             '@github/copilot': '1.0.85',
@@ -138,7 +142,7 @@ describe('image lifecycle', () => {
     ).toThrow(/failed verification/);
   });
 
-  it('omits the native claude agent from build args', () => {
+  it('includes the native claude agent in build args and expected versions', () => {
     const seenArgs: Record<string, string>[] = [];
     buildCandidate(
       {
@@ -147,6 +151,7 @@ describe('image lifecycle', () => {
           return plan.tag;
         },
         inspectBinaryVersions: () => ({
+          claude: '2.1.276',
           'opencode-ai': '1.18.31',
           '@openai/codex': '0.154.0',
           '@github/copilot': '1.0.85',
@@ -157,7 +162,7 @@ describe('image lifecycle', () => {
       't',
       agentEngines().values(),
     );
-    expect(seenArgs[0]).not.toHaveProperty('CLAUDE_VERSION');
+    expect(seenArgs[0]).toMatchObject({ CLAUDE_VERSION: '2.1.276' });
   });
 
   it('activates explicitly and rolls back without reversing data', () => {
