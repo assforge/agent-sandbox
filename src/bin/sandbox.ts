@@ -484,7 +484,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     case 'list': {
       const entries = Object.values(registry.workspaces);
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ workspaces: entries.map((entry) => redactedConfig(entry)) }, null, 2)}\n`);
         return 0;
       }
@@ -510,7 +510,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         if (!alive) return `${name}(${kind}, session absent)`;
         return windows.includes(name) ? `${name}(${kind})` : `${name}(${kind}, window missing)`;
       };
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances.map((i) => ({ name: i.name, kind: i.kind, window: windows.includes(i.window) })) }, null, 2)}\n`);
         return 0;
       }
@@ -518,7 +518,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     }
     case 'register': {
-      const root = takeRestOption(rest, ['--root']);
+      const root = takeRestOption(rest, ['--root', '-r']);
       if (!root) throw new UsageError('workspace register requires --root <path>');
       if (!existsSync(root)) {
         throw new CliError(`workspace root does not exist: ${root}`, 2);
@@ -578,7 +578,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'logs': {
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
-      const tail = takeRestOption(rest, ['--tail']) ?? '50';
+      const tail = takeRestOption(rest, ['--tail', '-t']) ?? '50';
       if (!/^\d+$/.test(tail)) throw new UsageError('workspace logs --tail must be a number');
       const state = rt.containerState(deps.runner, entry.container, entry.id);
       if (state === 'absent' || state === 'foreign') {
@@ -696,7 +696,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     }
     case 'backup': {
-      const output = takeRestOption(rest, ['--output']);
+      const output = takeRestOption(rest, ['--output', '-o']);
       if (!output) throw new UsageError('workspace backup requires --output <path>');
       const entry = await resolveAndEnsure(deps, registry, workspace);
       const rt = selectRuntime(deps, entry);
@@ -827,7 +827,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
         const spec = engine.installSpec();
         return { name: engine.name, npmPackage: spec.npmPackage, pinnedVersion: spec.pinnedVersion, statePaths: engine.statePaths, launch: engine.launch };
       });
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ agents: listed }, null, 2)}\n`);
         return 0;
       }
@@ -856,7 +856,7 @@ async function agentCommand(deps: MainDeps, action: string, rest: string[]): Pro
           return version || null;
         },
       }, agents.values());
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ agents: entries }, null, 2)}\n`);
         return 0;
       }
@@ -937,7 +937,7 @@ async function credentialsCommand(deps: MainDeps, action: string, rest: string[]
   }
   if (action === 'list') {
     const entries = Object.values(registry.workspaces);
-    if (rest.includes('--json')) {
+    if ((rest.includes('--json') || rest.includes('-j'))) {
       const payload: Record<string, string[]> = {};
       for (const entry of entries) payload[entry.id] = listCredentialInstances(deps.homeDir, entry.id);
       deps.stdout(`${JSON.stringify({ credentials: payload }, null, 2)}\n`);
@@ -949,7 +949,7 @@ async function credentialsCommand(deps: MainDeps, action: string, rest: string[]
     }
     return 0;
   }
-  const instance = takeRestOption(rest, ['--instance']);
+  const instance = takeRestOption(rest, ['--instance', '-i']);
   if (!instance) throw new UsageError(`credentials ${action} requires --instance <name>`);
   try {
     assertInstanceName(instance);
@@ -970,7 +970,7 @@ async function credentialsCommand(deps: MainDeps, action: string, rest: string[]
       return 0;
     }
     case 'set': {
-      const file = takeRestOption(rest, ['--file']);
+      const file = takeRestOption(rest, ['--file', '-f']);
       if (!file) throw new UsageError('credentials set requires --file <path>');
       let content: string;
       try {
@@ -1014,7 +1014,7 @@ async function runtimeCommand(deps: MainDeps, action: string, rest: string[]): P
         verified: engine.verified,
         capabilities: engine.capabilities,
       }));
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ runtimes: rows }, null, 2)}\n`);
         return 0;
       }
@@ -1047,7 +1047,7 @@ async function terminalCommand(deps: MainDeps, action: string, rest: string[]): 
     case 'list': {
       const selected = loadHostConfig(deps.homeDir).terminal;
       const rows = Object.values(TERMINAL_ENGINES).map((engine) => ({ name: engine.name, selected: engine.name === selected }));
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ terminals: rows }, null, 2)}\n`);
         return 0;
       }
@@ -1086,7 +1086,7 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
         if (engine) containers.push(...engine.listManagedContainers(deps.runner));
       }
       const entries = Object.values(registry.workspaces).map((entry) => ({ id: entry.id, image: entry.image, container: entry.container }));
-      if (rest.includes('--json')) {
+      if ((rest.includes('--json') || rest.includes('-j'))) {
         deps.stdout(`${JSON.stringify({ images: entries, containers }, null, 2)}\n`);
         return 0;
       }
