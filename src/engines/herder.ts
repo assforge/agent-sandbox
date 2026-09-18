@@ -151,6 +151,8 @@ export function runInPane(runner: CommandRunner, session: string, pane: string, 
   }
 }
 export function herderShellCommand(command: ExecSpec): string {
+  // POSIX single-quote escaping shared with the tmux display renderer:
+  // values stay inert when the pane shell parses them.
   const quote = (part: string): string => {
     if (/^[A-Za-z0-9_./:=-]+$/.test(part)) return part;
     return `'${part.replace(/'/g, `'\\''`)}'`;

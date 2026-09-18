@@ -45,14 +45,3 @@ export function redactedConfig(entry: WorkspaceEntry): Record<string, unknown> {
     instances: entry.instances.map((instance) => ({ name: instance.name, kind: instance.kind, window: instance.window })),
   };
 }
-
-export function validateRegistryShape(value: unknown): string[] {
-  const problems: string[] = [];
-  if (typeof value !== 'object' || value === null) return ['registry root must be an object'];
-  const record = value as Record<string, unknown>;
-  if (record['version'] !== 1) problems.push('registry version must be 1');
-  if (typeof record['workspaces'] !== 'object' || record['workspaces'] === null) {
-    problems.push('registry workspaces must be an object');
-  }
-  return problems;
-}

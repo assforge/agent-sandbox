@@ -90,7 +90,8 @@ export function loadRegistry(registryPath: string): Registry {
     throw new Error(`registry has an unsupported version or shape: ${registryPath}`);
   }
   const workspaces = record.workspaces as Registry['workspaces'];
-  for (const entry of Object.values(workspaces)) {
+  for (const [key, entry] of Object.entries(workspaces)) {
+    validateWorkspaceEntry(registryPath, key, entry);
     // Backfill registries written before the network policy existed.
     if (entry.network !== 'open' && entry.network !== 'restricted') entry.network = 'open';
     if (entry.previousImage === undefined) entry.previousImage = null;
@@ -98,6 +99,41 @@ export function loadRegistry(registryPath: string): Registry {
     if (typeof entry.terminal !== 'string' || entry.terminal.length === 0) entry.terminal = 'tmux';
   }
   return { version: REGISTRY_VERSION, workspaces };
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/** Strict entry validation: a corrupt entry fails the whole load with its key, never a later TypeError. */
+function validateWorkspaceEntry(registryPath: string, key: string, entry: WorkspaceEntry): void {
+  const bad = (why: string): Error => new Error(`registry entry ${key} is invalid (${why}): ${registryPath}`);
+  if (typeof entry !== 'object' || entry === null) throw bad('not an object');
+  if (!nonEmptyString(entry.id)) throw bad('id must be a non-empty string');
+  if (entry.id !== key) throw bad('id does not match its registry key');
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(entry.id)) throw bad('id uses illegal characters');
+  if (!nonEmptyString(entry.root) || !entry.root.startsWith('/')) throw bad('root must be an absolute path');
+  for (const field of ['container', 'session', 'homeVolume'] as const) {
+    if (!nonEmptyString(entry[field])) throw bad(`${field} must be a non-empty string`);
+  }
+  if (entry.image !== null && typeof entry.image !== 'string') throw bad('image must be a string or null');
+  if (entry.previousImage !== undefined && entry.previousImage !== null && typeof entry.previousImage !== 'string') {
+    throw bad('previousImage must be a string or null');
+  }
+  if (!Array.isArray(entry.instances)) throw bad('instances must be an array');
+  for (const instance of entry.instances) {
+    if (typeof instance !== 'object' || instance === null) throw bad('instance must be an object');
+    const fields = instance as unknown as Record<string, unknown>;
+    for (const field of ['name', 'kind', 'window'] as const) {
+      if (!nonEmptyString(fields[field])) throw bad(`instance ${field} must be a non-empty string`);
+    }
+  }
+  if (!Array.isArray(entry.mounts) || !entry.mounts.every((mount) => typeof mount === 'string')) {
+    throw bad('mounts must be an array of strings');
+  }
+  if (entry.network !== undefined && entry.network !== 'open' && entry.network !== 'restricted') {
+    throw bad('network must be open or restricted');
+  }
 }
 
 export function saveRegistry(registryPath: string, registry: Registry): void {
