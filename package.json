@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "tsc && chmod +x dist/bin/sandbox.js",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
