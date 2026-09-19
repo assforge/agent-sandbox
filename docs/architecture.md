@@ -504,7 +504,10 @@ the exact paths was not enough, since binding `/Users` or `/home` hands
 over HOME, the registry and every dotfile without ever naming HOME.
 The descendant rule closes the mirror image: mounting
 `~/.agent.sandbox/registry.json` directly would do by name what the
-ancestor rule exists to prevent. Two limits are worth stating plainly:
+ancestor rule exists to prevent. Registration and restore both store the
+vetted canonical path, not the spelling the user or manifest gave: vetting
+one spelling while storing another would let a symlink swapped afterwards
+redirect the next bind. Two limits are worth stating plainly:
 the check is lexical, run on a best-effort `realpath` (a path that cannot
 be resolved falls through uncanonicalized), and it names no container
 runtime socket — a socket bind is not refused by this guard.

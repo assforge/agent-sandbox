@@ -100,6 +100,12 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
  * registry transaction. The home volume is copied separately by `copyRestoreHome`:
  * a volume copy is slow and must never be held under the registry lock.
  */
+/**
+ * A backup manifest carries a path registration would refuse. The CLI maps
+ * this to exit code 2, matching the registration refusal; anything else the
+ * restore boundary rejects stays a plain error.
+ */
+export class BackupRefusedError extends Error {}
 export function planRestore(registry: Registry, outputDir: string, homeDir: string): WorkspaceEntry {
   let parsed: unknown;
   try {
@@ -115,18 +121,26 @@ export function planRestore(registry: Registry, outputDir: string, homeDir: stri
   // A restored root is bound read-write on the next start with no further
   // vetting, so it gets the same guard as registration. Validated here,
   // before the claim is written: a bad backup fails without freezing the
-  // workspace behind a claim it can never clear.
+  // workspace behind a claim it can never clear. The vetted canonical path
+  // is what gets stored, exactly as registration stores its canonical root:
+  // vetting one spelling while storing another would let a symlink swapped
+  // between restore and start redirect the next bind.
   const root = requiredRoot(record, 'root');
-  const rootProblem = rejectForbiddenMount(defaultCanonicalize(root), homeDir);
-  if (rootProblem) throw new Error(`backup workspace.json has a refused root: ${root} (${rootProblem})`);
+  const canonicalRoot = defaultCanonicalize(root);
+  const rootProblem = rejectForbiddenMount(canonicalRoot, homeDir);
+  if (rootProblem) throw new BackupRefusedError(`backup workspace.json has a refused root: ${root} (${rootProblem})`);
   const rawMounts = record['mounts'];
-  const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
-  // Same guard for restored mounts. Only the mount path is canonicalized,
-  // matching registration (`vettedMount` passes `homeDir` through as-is);
-  // callers pass a canonical home directory as `os.homedir()` provides.
-  for (const mount of mounts) {
-    const problem = rejectForbiddenMount(defaultCanonicalize(mount), homeDir);
-    if (problem) throw new Error(`backup workspace.json mounts a refused path: ${mount} (${problem})`);
+  const listed = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
+  // Same guard for restored mounts, same canonicalization as registration
+  // (`vettedMount` passes `homeDir` through as-is and stores the canonical
+  // mount); callers pass a canonical home directory as `os.homedir()`
+  // provides. Stored canonical, for the same symlink-swap reason as root.
+  const mounts: string[] = [];
+  for (const mount of listed) {
+    const canonical = defaultCanonicalize(mount);
+    const problem = rejectForbiddenMount(canonical, homeDir);
+    if (problem) throw new BackupRefusedError(`backup workspace.json mounts a refused path: ${mount} (${problem})`);
+    mounts.push(canonical);
   }
   const rawForks = record['forks'];
   // A restored fork name reaches fork pruning, so it is validated here
@@ -144,7 +158,7 @@ export function planRestore(registry: Registry, outputDir: string, homeDir: stri
     : [];
   const entry: WorkspaceEntry = {
     id,
-    root,
+    root: canonicalRoot,
     container: requiredName(record, 'container'),
     image: typeof record['image'] === 'string' ? (record['image'] as string) : null,
     previousImage: typeof record['previousImage'] === 'string' ? (record['previousImage'] as string) : null,

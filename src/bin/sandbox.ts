@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 import { agentEngine, agentEngines, loadUserCatalog, outdatedEngines, type AgentEngine, type VersionRunner } from '../engines/agent.js';
-import { backupWorkspace, copyRestoreHome, planRestore } from '../backup.js';
+import { backupWorkspace, copyRestoreHome, planRestore, BackupRefusedError } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import {
   assertInstanceName,
@@ -1348,7 +1348,15 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         // transaction and clears it in the one below, which is why stop-and-re-run is safe:
         // copying over a half-copy completes it.
         const restored = withRegistry(deps, (live) => {
-          const target = planRestore(live, input, deps.homeDir);
+          let target: WorkspaceEntry;
+          try {
+            target = planRestore(live, input, deps.homeDir);
+          } catch (error) {
+            // A refused backup path is the restore-side twin of a refused
+            // mount at registration, which exits 2.
+            if (error instanceof BackupRefusedError) throw new CliError(error.message, 2);
+            throw error;
+          }
           if (target.id !== entry.id) {
             throw new CliError(`backup identity changed during restore; nothing was saved`, 1);
           }
