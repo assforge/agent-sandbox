@@ -119,6 +119,7 @@ Commands:
   build        Build a verified candidate from pinned versions
   activate     Cut over to a candidate at the next start
   rollback     Re-activate the previous image
+  prune        Remove unreferenced workspace images
 
 Run 'sandbox image ACTION --help' for more information on an action.
 agent upgrade and image build only produce a candidate. activate and
@@ -248,6 +249,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     build: 'Usage: sandbox image build\n\nBuild a verified candidate from pinned versions; activate explicitly afterwards.\n',
     activate: 'Usage: sandbox image activate <digest>\n\nAsk for confirmation when instances are live; recreates the container on the new image at the next start.\n',
     rollback: 'Usage: sandbox image rollback <digest>\n\nAsk for confirmation when instances are live. Requires an earlier activation and does not reverse a data migration.\n',
+    prune: 'Usage: sandbox image prune\n\nRemove workspace images no workspace references (current and previous are kept). Asks for confirmation.\n',
   },
   credentials: {
     list: 'Usage: sandbox credentials list [--json, -j]\n\nList instances holding credential files.\n',

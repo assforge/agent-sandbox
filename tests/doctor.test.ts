@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { doctorExitCode, driftChecks, renderDoctorJson, renderDoctorText, runDoctor, type ProbeEnv } from '../src/doctor.js';
+import { collectProjectHookCommands, doctorExitCode, driftChecks, hookChecks, renderDoctorJson, renderDoctorText, runDoctor, type ProbeEnv } from '../src/doctor.js';
 
 const healthy: ProbeEnv = {
   nodeVersion: 'v22.1.0',
@@ -64,6 +64,25 @@ describe('runDoctor', () => {
     expect(doctorExitCode(wired)).toBe(0);
     const clean = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
     expect(clean.some((check) => check.id.startsWith('agent-drift'))).toBe(false);
+  });
+
+  it('collects hook and MCP server commands from project configs', () => {
+    const files: Record<string, string> = {
+      '/w/.claude/settings.json': JSON.stringify({
+        hooks: { SessionStart: [{ hooks: [{ command: 'code-review-graph status --fast' }] }], Stop: 'not-an-array' },
+      }),
+      '/w/.claude/settings.local.json': 'broken{',
+      '/w/.mcp.json': JSON.stringify({ mcpServers: { graph: { command: 'code-review-graph' }, ctx7: { command: 'npx -y ctx7' } } }),
+    };
+    expect(collectProjectHookCommands((path) => files[path] ?? null, '/w')).toEqual(['code-review-graph', 'npx']);
+    expect(collectProjectHookCommands(() => null, '/w')).toEqual([]);
+    expect(hookChecks([])).toEqual([]);
+    const warned = hookChecks(['code-review-graph']);
+    expect(warned[0]).toMatchObject({ id: 'workspace-hooks', status: 'warn' });
+    expect(warned[0]?.summary).toMatch(/code-review-graph/);
+    const wired = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [], unresolvedHookCommands: ['code-review-graph'] });
+    expect(wired.find((check) => check.id === 'workspace-hooks')?.status).toBe('warn');
+    expect(doctorExitCode(wired)).toBe(0);
   });
 
   it('probes the selected runtime and flags experimental engines', () => {

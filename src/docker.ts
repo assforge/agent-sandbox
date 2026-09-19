@@ -241,3 +241,19 @@ export function listManagedContainers(runner: CommandRunner): string[] {
   if (listed.status !== 0) return [];
   return listed.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
 }
+
+/** Local workspace images, by repository prefix. Every tag sandbox mints carries it. */
+export function listWorkspaceImages(runner: CommandRunner): string[] {
+  const listed = runner.run('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}']);
+  if (listed.status !== 0) return [];
+  return listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('sandbox-workspace:'));
+}
+
+/** Remove one local image. Throws on failure; the caller reports it. */
+export function removeImage(runner: CommandRunner, image: string): void {
+  const removed = runner.run('docker', ['rmi', image]);
+  if (removed.status !== 0) throw new Error(`cannot remove image ${image}: ${removed.stderr.trim()}`);
+}

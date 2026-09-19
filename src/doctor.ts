@@ -40,6 +40,8 @@ export interface WorkspacePosture {
   networkInternal?: boolean | null;
   /** Roster windows with no live pane. Empty when unscopable. */
   deadWindows: string[];
+  /** Project hook commands missing inside the running container. Null skips the check. */
+  unresolvedHookCommands?: string[] | null;
   /** Agent versions inside the running container. Null skips the drift check. */
   runningVersions?: Record<string, string> | null;
   /**
@@ -55,6 +57,77 @@ export interface WorkspacePosture {
   pendingRestore?: { state: string; source: string } | null;
 }
 
+/**
+ * First tokens of hook and MCP server commands declared in project agent
+ * configs. The workspace root mounts into the container, so a hook that
+ * names a host-only binary fails obscurely mid-session; doctor surfaces it
+ * up front. Unparseable files are skipped: broken config is the agent's
+ * problem, not doctor's.
+ */
+export function collectProjectHookCommands(readFile: (path: string) => string | null, root: string): string[] {
+  const found: string[] = [];
+  const push = (command: unknown): void => {
+    if (typeof command !== 'string') return;
+    const binary = command.trim().split(/\s+/, 1)[0];
+    if (binary && !found.includes(binary)) found.push(binary);
+  };
+  for (const file of ['.claude/settings.json', '.claude/settings.local.json']) {
+    let parsed: unknown = null;
+    try {
+      const text = readFile(`${root}/${file}`);
+      if (!text) continue;
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      continue;
+    }
+    const hooks = (parsed as Record<string, unknown>)['hooks'];
+    if (typeof hooks !== 'object' || hooks === null) continue;
+    for (const group of Object.values(hooks)) {
+      if (!Array.isArray(group)) continue;
+      for (const matcher of group) {
+        if (typeof matcher !== 'object' || matcher === null) continue;
+        const list = (matcher as Record<string, unknown>)['hooks'];
+        if (!Array.isArray(list)) continue;
+        for (const hook of list) {
+          if (typeof hook !== 'object' || hook === null) continue;
+          push((hook as Record<string, unknown>)['command']);
+        }
+      }
+    }
+  }
+  try {
+    const text = readFile(`${root}/.mcp.json`);
+    if (text) {
+      const servers = (JSON.parse(text) as Record<string, unknown>)['mcpServers'];
+      if (typeof servers === 'object' && servers !== null) {
+        for (const server of Object.values(servers)) {
+          if (typeof server !== 'object' || server === null) continue;
+          push((server as Record<string, unknown>)['command']);
+        }
+      }
+    }
+  } catch {
+    // Same as above: skip, do not diagnose.
+  }
+  return found;
+}
+
+/**
+ * Warn for project hook commands that do not resolve inside the running
+ * container. Empty means everything resolved: no check, like drift.
+ */
+export function hookChecks(missing: string[]): DoctorCheck[] {
+  if (missing.length === 0) return [];
+  return [
+    {
+      id: 'workspace-hooks',
+      group: 'Workspace',
+      status: 'warn',
+      summary: `Project hooks reference commands missing in the container: ${missing.join(', ')}`,
+      remediation: 'Install them in the image, or scope those hooks to host-only runs',
+    },
+  ];
+}
 /**
  * Warn for running agent binaries that drifted from their pinned versions
  * (self-updaters move on their own). Unknown agents are ignored; the check
@@ -223,6 +296,9 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
   }
   if (posture.runningVersions) {
     checks.push(...driftChecks(posture.runningVersions));
+  }
+  if (posture.unresolvedHookCommands) {
+    checks.push(...hookChecks(posture.unresolvedHookCommands));
   }
   return checks;
 }
