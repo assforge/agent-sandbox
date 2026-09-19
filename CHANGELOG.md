@@ -1,5 +1,14 @@
 # @assforge/cogent-sandbox
 
+## 0.22.3
+
+### Patch Changes
+
+- c2dfc05: Harden restore and mounts: backups carrying a refused mount fail before
+  any claim is written, descendants of the sandbox state directory are
+  refused like the directory itself, and workspace status lists windows
+  through the terminal engine instead of a literal tmux call.
+
 ## 0.22.2
 
 ### Patch Changes
