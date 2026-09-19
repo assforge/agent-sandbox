@@ -497,10 +497,14 @@ Extra mounts are read-only same-path binds, and the workspace root can
 never be dropped: both `configure --drop-mount` and `unmount` refuse it.
 
 The guard that vets a new mount refuses `/`, HOME, the sandbox state
-directory, and **every ancestor of those two**. The ancestor rule is the
-load-bearing part — refusing only the exact paths was not enough, since
-binding `/Users` or `/home` hands over HOME, the registry and every
-dotfile without ever naming HOME. Two limits are worth stating plainly:
+directory, and **every ancestor of those two**, plus every **descendant
+of the state directory** (a child of HOME stays allowed: workspace roots
+live there). The ancestor rule is the load-bearing part — refusing only
+the exact paths was not enough, since binding `/Users` or `/home` hands
+over HOME, the registry and every dotfile without ever naming HOME.
+The descendant rule closes the mirror image: mounting
+`~/.agent.sandbox/registry.json` directly would do by name what the
+ancestor rule exists to prevent. Two limits are worth stating plainly:
 the check is lexical, run on a best-effort `realpath` (a path that cannot
 be resolved falls through uncanonicalized), and it names no container
 runtime socket — a socket bind is not refused by this guard.

@@ -286,6 +286,8 @@ restore:
   user --> CLI: workspace restore --input <dir>
   CLI --> dir: refuse unless the manifest id equals this workspace's id;
                a foreign backup is refused, never adopted
+  CLI --> dir: refuse any manifest mount the guard would refuse at
+               registration; a bad backup fails before any claim is written
   CLI --> user: [confirm] running state will be overwritten
   CLI --> lock: acquire workspace lock
   CLI --> registry: [txn 1] reinstate the entry WHOLESALE from the backup,

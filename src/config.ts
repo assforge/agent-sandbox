@@ -31,13 +31,19 @@ export function normalizeLexical(path: string): string {
 export function rejectForbiddenMount(mount: string, homeDir: string = homedir()): string | null {
   const normalized = normalizeLexical(mount);
   if (normalized === '/') return 'root mount is rejected by default';
-  const guarded: [string, string][] = [
-    ['HOME', normalizeLexical(homeDir)],
-    ['the sandbox state directory', normalizeLexical(sandboxDir(homeDir))],
+  const guarded: [string, string, 'up' | 'both'][] = [
+    ['HOME', normalizeLexical(homeDir), 'up'],
+    ['the sandbox state directory', normalizeLexical(sandboxDir(homeDir)), 'both'],
   ];
-  for (const [label, target] of guarded) {
+  for (const [label, target, direction] of guarded) {
     if (normalized === target || target.startsWith(`${normalized}/`)) {
       return `${label} mount is rejected by default: ${normalized} contains ${target}`;
+    }
+    // Descendants only matter for the state directory: a child of HOME is
+    // an ordinary workspace root, but a child of the state directory is a
+    // registry or credential file by another name.
+    if (direction === 'both' && normalized.startsWith(`${target}/`)) {
+      return `${label} mount is rejected by default: ${normalized} is inside ${target}`;
     }
   }
   return null;

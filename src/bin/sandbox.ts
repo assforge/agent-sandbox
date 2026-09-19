@@ -885,9 +885,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const term = selectTerminal(deps, entry);
       const state = rt.containerState(deps.runner, entry.container, entry.id);
       const alive = term.sessionAlive(deps.runner, entry.session);
-      const windows = alive
-        ? deps.runner.run('tmux', ['list-windows', '-t', entry.session, '-F', '#{window_name}']).stdout.split('\n').map((line) => line.trim())
-        : [];
+      const windows = alive ? term.listWindows(deps.runner, entry.session) : [];
       const describe = (name: string, kind: string, homeMode?: string): string => {
         const home = homeMode ?? 'shared';
         if (!alive) return `${name}(${kind}:${home}, session absent)`;
@@ -1350,7 +1348,7 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         // transaction and clears it in the one below, which is why stop-and-re-run is safe:
         // copying over a half-copy completes it.
         const restored = withRegistry(deps, (live) => {
-          const target = planRestore(live, input);
+          const target = planRestore(live, input, deps.homeDir);
           if (target.id !== entry.id) {
             throw new CliError(`backup identity changed during restore; nothing was saved`, 1);
           }

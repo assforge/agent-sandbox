@@ -35,6 +35,7 @@ export interface TerminalEngine {
   killSession: (runner: CommandRunner, session: string) => void;
   closeWindow: (runner: CommandRunner, session: string, window: string) => void;
   listSessions: (runner: CommandRunner) => string[];
+  listWindows: (runner: CommandRunner, session: string) => string[];
   openAgentWindow: (
     runner: CommandRunner,
     session: string,
@@ -67,6 +68,11 @@ export const TmuxTerminalEngine: TerminalEngine = {
   closeWindow,
   listSessions: (runner) => {
     const listed = runner.run('tmux', ['list-sessions', '-F', '#{session_name}']);
+    if (listed.status !== 0) return [];
+    return listed.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  },
+  listWindows: (runner, session) => {
+    const listed = runner.run('tmux', ['list-windows', '-t', session, '-F', '#{window_name}']);
     if (listed.status !== 0) return [];
     return listed.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
   },

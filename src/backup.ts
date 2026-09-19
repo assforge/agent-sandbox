@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { redactedConfig } from './config.js';
+import { redactedConfig, rejectForbiddenMount } from './config.js';
 import type { InstanceEntry, Registry, WorkspaceEntry } from './registry.js';
+import { defaultCanonicalize } from './resolve.js';
 
 export interface BackupRunner {
   /** Copy a path out of the running container to a host directory. */
@@ -99,7 +100,7 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
  * registry transaction. The home volume is copied separately by `copyRestoreHome`:
  * a volume copy is slow and must never be held under the registry lock.
  */
-export function planRestore(registry: Registry, outputDir: string): WorkspaceEntry {
+export function planRestore(registry: Registry, outputDir: string, homeDir: string): WorkspaceEntry {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(join(outputDir, 'workspace.json'), 'utf8'));
@@ -113,11 +114,22 @@ export function planRestore(registry: Registry, outputDir: string): WorkspaceEnt
   const id = requiredName(record, 'id');
   const rawMounts = record['mounts'];
   const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
+  // A restored mount is bound on the next start with no further vetting, so
+  // a hand-edited manifest must not smuggle in a path registration would
+  // refuse. Validated here, before the claim is written: a bad backup fails
+  // without freezing the workspace behind a claim it can never clear.
+  // Both sides go through the same canonicalization: tmpdir-style symlinked
+  // prefixes must compare equal on macOS.
+  const home = defaultCanonicalize(homeDir);
+  for (const mount of mounts) {
+    const problem = rejectForbiddenMount(defaultCanonicalize(mount), home);
+    if (problem) throw new Error(`backup workspace.json mounts a refused path: ${mount} (${problem})`);
+  }
   const rawForks = record['forks'];
-  // A restored fork name is later interpolated into a shell command by fork
-  // pruning, so it is validated here with the same charset every other name
-  // gets. Accepting an arbitrary string array let a tampered backup smuggle
-  // shell metacharacters and path traversal into that command.
+  // A restored fork name reaches fork pruning, so it is validated here
+  // with the same charset every other name gets. Accepting an arbitrary
+  // string array would let a tampered backup smuggle shell metacharacters
+  // and path traversal toward that command.
   const forks = Array.isArray(rawForks)
     ? rawForks.map((fork) => {
         if (typeof fork !== 'string') throw new Error('backup workspace.json has a non-string forks entry');
@@ -161,8 +173,8 @@ export function copyRestoreHome(runner: BackupRunner, entry: WorkspaceEntry, out
  * The composed form, for callers that want both halves in one step. The CLI uses the two
  * halves separately so the registry write is never held across the copy.
  */
-export function restoreWorkspace(runner: BackupRunner, registry: Registry, outputDir: string): WorkspaceEntry {
-  const entry = planRestore(registry, outputDir);
+export function restoreWorkspace(runner: BackupRunner, registry: Registry, outputDir: string, homeDir: string): WorkspaceEntry {
+  const entry = planRestore(registry, outputDir, homeDir);
   copyRestoreHome(runner, entry, outputDir);
   return entry;
 }
