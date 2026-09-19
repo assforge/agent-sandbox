@@ -22,6 +22,11 @@ export function parseInspectedVersions(stdout: string): Record<string, string> {
   // copilot 1.0.86 appends a `Run 'copilot update' ...` hint to stdout after
   // its version line. It is filtered here so the positional parse below keeps
   // working; no version line ever starts with `Run '`.
+  // The positional scheme is fail-closed by construction: any missing or
+  // extra line shifts later values into the wrong slots, the shifted value
+  // will not equal its pin, and buildCandidate throws rather than shipping
+  // a misattributed image. Doctor drift can at worst warn on a shifted
+  // probe; it never installs anything.
   const lines = stdout
     .split('\n')
     .map((line) => line.trim())

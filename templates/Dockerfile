@@ -34,7 +34,7 @@ RUN apt-get update \
 # (so root-owned caches land here); the whole tree is handed back below.
 ENV HOME=/home/agent
 RUN useradd -u 1001 -m -s /bin/bash agent \
-  && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot \
+  && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi \
     /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
   && chown -R agent:agent /home/agent
 
