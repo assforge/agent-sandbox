@@ -122,19 +122,24 @@ runtime    entry.runtime  ?? config.json       per workspace, at registration
 
 ```
 AgentEngine     name, statePaths, launch, installSpec(), latestVersion()
-  installSpec   { channel: npm|native, npmPackage, pinnedVersion }
+  installSpec   { channel: npm|native, npmPackage, minimumVersion }
   statePaths    home-relative dirs this agent owns (fork seeds, see §5)
   launch        argv vector, never a shell string
 
-built-in catalog — five entries, held as data
-  claude    native  pinned 2.1.276        .claude
+built-in catalog — five entries, held as data. Versions are floors, not
+pins: the image installs whatever the channels currently serve
+(latest-first), and the build gate demands every binary report at or
+above its floor. The resolved set is printed as the build receipt and
+recorded on the registry entry at activation, which is what doctor
+compares the running container against.
+  claude    native  minimum 2.1.276       .claude
             latest read from the vendor release feed
             https://downloads.claude.ai/claude-code-releases/latest
-  opencode  npm     opencode-ai@1.18.31   .config/opencode
-  codex     npm     @openai/codex@0.155.1 .codex
-  copilot   npm     @github/copilot@1.0.86
+  opencode  npm     opencode-ai>=1.18.31   .config/opencode
+  codex     npm     @openai/codex>=0.155.1 .codex
+  copilot   npm     @github/copilot>=1.0.86
                                           .copilot, .config/github-copilot
-  pi        npm     @earendil-works/pi-coding-agent@0.85.1
+  pi        npm     @earendil-works/pi-coding-agent>=0.85.1
                                           .pi/agent
 
   grok, agy  named, never constructed: no verified linux install
@@ -254,10 +259,13 @@ line of defence.
 image (built from templates/Dockerfile, no secrets)
   base                     node:22-bookworm-slim
   apt                      git, ca-certificates, openssh-client, curl
-  npm globals (ARG-pinned) opencode-ai, @openai/codex, @github/copilot,
+  npm globals (latest)   opencode-ai, @openai/codex, @github/copilot,
                              @earendil-works/pi-coding-agent
-  /opt/claude              claude via the vendor installer, ARG-pinned,
-                           agent-owned; PATH gains /opt/claude/.local/bin
+                             (NAME_VERSION build args pin one only as an
+                             override: upgrade flows, emergencies)
+  /opt/claude              claude via the vendor installer (latest unless
+                           CLAUDE_VERSION overrides), agent-owned;
+                           PATH gains /opt/claude/.local/bin
   agent user               uid 1001 (pinned); USER agent for the workload
   workdir                  /home/agent/work
   entrypoint               /usr/local/bin/sandbox-entrypoint.sh
@@ -372,7 +380,8 @@ removes orphan fork directories (credential files never).
 ```
 pins (engine catalog) --> build args <AGENT>_VERSION, one per agent
   --> build (docker or apple)
-  --> inspect: the five CLI versions must equal the expected five
+  --> inspect: the five CLI versions must clear their catalog floors;
+      the resolved set is the build receipt
   --> verify: the entrypoint is executable, and -- on the `image build`
       path only -- a throwaway run wrote a ready.json carrying the
       generation it was given

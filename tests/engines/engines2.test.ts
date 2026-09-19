@@ -46,7 +46,7 @@ describe('user catalog', () => {
     try {
       const dir = join(home, '.agent.sandbox', 'engines');
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'kiro.json'), JSON.stringify([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: '9.9.9' }]), 'utf8');
+      writeFileSync(join(dir, 'kiro.json'), JSON.stringify([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, minimumVersion: '9.9.9' }]), 'utf8');
       const entries = loadUserCatalog(home);
       expect(entries).toHaveLength(1);
       expect(entries[0]?.name).toBe('kiro');

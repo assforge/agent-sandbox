@@ -2,13 +2,20 @@ import { imageHelp } from '../help.js';
 import { UsageError } from '../cli.js';
 import { buildCandidate, INSPECT_VERSIONS_SCRIPT, parseInspectedVersions } from '../image.js';
 import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
-import { activateImage, rollbackImage } from '../image.js';
+import { activateImage, formatVersionReceipt, rollbackImage } from '../image.js';
 import { acquireLock } from '../lock.js';
 import { loadHostConfig } from '../hostconfig.js';
 import { lookupWorkspace } from '../registry.js';
 import { defaultCanonicalize } from '../resolve.js';
 import { CliError, type MainDeps } from './deps.js';
 import { agentRegistry, loadRegistryOrThrow, resolveAndEnsure, selectRuntime, withRegistry } from './lookup.js';
+
+/** Best-effort version recording for activation. Null when the image cannot be probed; activation never depends on it. */
+function probeImageVersions(deps: MainDeps, rt: RuntimeEngine, image: string): Record<string, string> | null {
+  const probed = rt.runOneShot(deps.runner, image, { SANDBOX_GENERATION: 'record', SANDBOX_CONFIG_FINGERPRINT: 'record' }, ['sh', '-c', INSPECT_VERSIONS_SCRIPT]);
+  if (probed.status !== 0) return null;
+  return parseInspectedVersions(probed.stdout);
+}
 export async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {  const registry = loadRegistryOrThrow(deps);
   const agents = agentRegistry(deps);  switch (action) {
     case 'help':
@@ -18,17 +25,30 @@ export async function imageCommand(deps: MainDeps, action: string, rest: string[
       const runtimes = new Set(Object.values(registry.workspaces).map((item) => item.runtime));
       runtimes.add(loadHostConfig(deps.homeDir).runtime);
       const containers: string[] = [];
+      const referenced = new Set<string>();
+      for (const entry of Object.values(registry.workspaces)) {
+        if (entry.image) referenced.add(entry.image);
+        if (entry.previousImage) referenced.add(entry.previousImage);
+      }
+      const unreferenced: string[] = [];
       for (const name of runtimes) {
         const engine = RUNTIME_ENGINES[name];
-        if (engine) containers.push(...engine.listManagedContainers(deps.runner));
+        if (!engine) continue;
+        containers.push(...engine.listManagedContainers(deps.runner));
+        for (const image of engine.listWorkspaceImages(deps.runner)) {
+          if (!referenced.has(image) && !unreferenced.includes(image)) unreferenced.push(image);
+        }
       }
       const entries = Object.values(registry.workspaces).map((entry) => ({ id: entry.id, image: entry.image, container: entry.container }));
       if ((rest.includes('--json') || rest.includes('-j'))) {
-        deps.stdout(`${JSON.stringify({ images: entries, containers }, null, 2)}\n`);
+        deps.stdout(`${JSON.stringify({ images: entries, containers, unreferenced }, null, 2)}\n`);
         return 0;
       }
       for (const item of entries) {
         deps.stdout(`${item.id}: ${item.image ?? '(none)'} (${item.container})\n`);
+      }
+      for (const image of unreferenced) {
+        deps.stdout(`unreferenced: ${image} (remove with: sandbox image prune)\n`);
       }
       return 0;
     }
@@ -66,7 +86,7 @@ export async function imageCommand(deps: MainDeps, action: string, rest: string[
         tag,
         agents.values(),
       );
-      deps.stdout(`candidate ${built.tag} verified; activate explicitly with: sandbox image activate ${built.tag}\n`);
+      deps.stdout(`candidate ${built.tag} verified (${formatVersionReceipt(built.versions)}); activate explicitly with: sandbox image activate ${built.tag}\n`);
       return 0;
     }
     case 'activate': {
@@ -81,10 +101,11 @@ export async function imageCommand(deps: MainDeps, action: string, rest: string[
       }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
+        const recorded = probeImageVersions(deps, rt, digest);
         const activation = withRegistry(deps, (live) => {
           const target = live.workspaces[entry.id];
           if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
-          return activateImage(target, digest);
+          return activateImage(target, digest, recorded ?? undefined);
         });
         deps.stdout(`activated ${activation.current} (previous: ${activation.previous ?? '(none)'})\n`);
         return 0;
@@ -98,13 +119,18 @@ export async function imageCommand(deps: MainDeps, action: string, rest: string[
         const approved = await deps.confirm(`${entry.instances.length} live instances will be interrupted. Roll back?`);
         if (!approved) throw new CliError('rollback cancelled; nothing was changed', 1);
       }
+      // Best-effort recording of the image we are rolling back to. Applied
+      // inside the transaction only when nothing re-pointed it meanwhile.
+      const rt = selectRuntime(deps, entry);
+      const previous = entry.previousImage;
+      const recorded = previous ? probeImageVersions(deps, rt, previous) : null;
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         const activation = withRegistry(deps, (live) => {
           const target = live.workspaces[entry.id];
           if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
           try {
-            return rollbackImage(target);
+            return rollbackImage(target, target.previousImage === previous ? (recorded ?? undefined) : undefined);
           } catch (error) {
             throw new CliError((error as Error).message, 1);
           }

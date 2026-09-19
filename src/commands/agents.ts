@@ -8,7 +8,7 @@ import { CliError, type MainDeps } from './deps.js';
 interface ResolvedAgentVersion {
   def: AgentEngine;
   key: string;
-  pinned: string;
+  minimum: string;
   latest: string;
 }
 
@@ -17,28 +17,28 @@ export function resolveAgentVersions(deps: MainDeps, defs: AgentEngine[], versio
   const resolved: ResolvedAgentVersion[] = [];
   for (const def of defs) {
     const spec = def.installSpec();
-    if (!spec.pinnedVersion) {
-      deps.stdout(`${def.name} has no pinned version and cannot be upgraded\n`);
+    if (!spec.minimumVersion) {
+      deps.stdout(`${def.name} has no minimum version and cannot be upgraded\n`);
       continue;
     }
     const latest = def.latestVersion(versionQueries);
     if (!latest) {
-      deps.stdout(`${def.name}: latest unknown, keeping pinned ${spec.pinnedVersion}\n`);
+      deps.stdout(`${def.name}: latest unknown, keeping minimum ${spec.minimumVersion}\n`);
       continue;
     }
-    resolved.push({ def, key: spec.npmPackage ?? def.name, pinned: spec.pinnedVersion, latest });
-    deps.stdout(`${def.name}: pinned ${spec.pinnedVersion}, latest ${latest}\n`);
+    resolved.push({ def, key: spec.npmPackage ?? def.name, minimum: spec.minimumVersion, latest });
+    deps.stdout(`${def.name}: minimum ${spec.minimumVersion}, latest ${latest}\n`);
   }
   return resolved;
 }
-/** Build a verified upgrade candidate from version overrides. */
+/** Build a verified upgrade candidate from version overrides. Returns the build receipt. */
 export function buildUpgradeCandidate(
   deps: MainDeps,
   rt: RuntimeEngine,
   agents: Iterable<AgentEngine>,
   overrides: Record<string, string>,
   tag: string,
-): { tag: string } {
+): { tag: string; versions: Record<string, string> } {
   const contextDir = new URL('../../templates', import.meta.url).pathname;
   return buildCandidate(
     {

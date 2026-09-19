@@ -39,7 +39,49 @@ export function parseInspectedVersions(stdout: string): Record<string, string> {
   return versions;
 }
 
-/** Build a candidate without secrets. Never retags the selected image. */
+/**
+ * Numeric X.Y.Z comparison. Null when either side is not three dot-separated
+ * integers: an unparseable version never satisfies a floor and never equals
+ * another version, so both the build gate and the drift check fail closed.
+ */
+export function compareVersions(left: string, right: string): number | null {
+  const parse = (value: string): [number, number, number] | null => {
+    const parts = value.trim().split('.');
+    if (parts.length !== 3) return null;
+    const nums = parts.map(Number);
+    if (nums.some((n) => !Number.isInteger(n) || n < 0)) return null;
+    return nums as [number, number, number];
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/** True when installed meets the floor. Unparseable input fails closed. */
+export function versionAtLeast(installed: string, minimum: string): boolean {
+  return compareVersions(installed, minimum) !== null && (compareVersions(installed, minimum) as number) >= 0;
+}
+
+/** Build receipt: resolved versions in probe order. */
+export function formatVersionReceipt(versions: Record<string, string>): string {
+  return Object.entries(versions)
+    .map(([name, version]) => `${name}@${version}`)
+    .join(', ');
+}
+
+/**
+ * Build a candidate without secrets. Never retags the selected image.
+ *
+ * Latest-first: the image installs whatever the channels currently serve;
+ * version overrides are passed through only when the caller pins one
+ * (upgrade flows, emergencies). The gate is structural, not exact: every
+ * engine must report a parseable version at or above its catalog floor.
+ * The resolved versions are returned as the build receipt.
+ */
 export function buildCandidate(
   runner: ImageRunner,
   contextDir: string,
@@ -48,21 +90,24 @@ export function buildCandidate(
   versionOverrides: Record<string, string> = {},
 ): { tag: string; versions: Record<string, string> } {
   const buildArgs: Record<string, string> = {};
-  const expected: Record<string, string> = {};
+  const floors: Record<string, string> = {};
   for (const engine of engines) {
     const spec = engine.installSpec();
-    if (!spec.pinnedVersion) continue;
-    const version = (spec.npmPackage ? versionOverrides[spec.npmPackage] : undefined)
-      ?? versionOverrides[engine.name]
-      ?? spec.pinnedVersion;
-    buildArgs[`${engine.name.toUpperCase()}_VERSION`] = version;
-    expected[spec.npmPackage ?? engine.name] = version;
+    if (!spec.minimumVersion) continue;
+    const override = (spec.npmPackage ? versionOverrides[spec.npmPackage] : undefined)
+      ?? versionOverrides[engine.name];
+    if (override !== undefined) buildArgs[`${engine.name.toUpperCase()}_VERSION`] = override;
+    floors[spec.npmPackage ?? engine.name] = spec.minimumVersion;
   }
   const tag = runner.buildImage({ contextDir, tag: candidateTag, buildArgs });
   const versions = runner.inspectBinaryVersions(tag);
-  for (const [npmPackage, want] of Object.entries(expected)) {
-    if (versions[npmPackage] !== want) {
-      throw new Error(`candidate image reports ${npmPackage}@${versions[npmPackage] ?? 'unknown'}, expected ${want}`);
+  for (const [npmPackage, minimum] of Object.entries(floors)) {
+    const got = versions[npmPackage];
+    if (!got) {
+      throw new Error(`candidate image reports no version for ${npmPackage}, minimum ${minimum}`);
+    }
+    if (!versionAtLeast(got, minimum)) {
+      throw new Error(`candidate image reports ${npmPackage}@${got}, below minimum ${minimum}`);
     }
   }
   if (!runner.verifyCandidate(tag)) {
@@ -81,21 +126,23 @@ export function recordActivation(previous: string | null, candidate: string): Ac
   return { previous, current: candidate };
 }
 
-/** Explicit cutover: the running image becomes the rollback target. */
-export function activateImage(entry: WorkspaceEntry, candidate: string): Activation {
+/** Explicit cutover: the running image becomes the rollback target. Records the inspected versions when the caller probed them. */
+export function activateImage(entry: WorkspaceEntry, candidate: string, versions?: Record<string, string>): Activation {
   const activation = recordActivation(entry.image, candidate);
   entry.previousImage = activation.previous;
   entry.image = activation.current;
+  if (versions) entry.agentVersions = versions;
   return activation;
 }
 
 /** Rollback re-activates the previous digest. It never reverses a data migration. */
-export function rollbackImage(entry: WorkspaceEntry): Activation {
+export function rollbackImage(entry: WorkspaceEntry, versions?: Record<string, string>): Activation {
   if (!entry.previousImage) {
     throw new Error(`no previous image recorded for workspace ${entry.id}; rollback requires an earlier activation`);
   }
   const activation = recordActivation(entry.image, entry.previousImage);
   entry.previousImage = activation.previous;
   entry.image = activation.current;
+  if (versions) entry.agentVersions = versions;
   return activation;
 }

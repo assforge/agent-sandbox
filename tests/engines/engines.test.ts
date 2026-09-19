@@ -26,7 +26,7 @@ describe('engine registries', () => {
 
   it('adds a fifth agent through catalog data alone (AC-4)', () => {
     const document = JSON.parse(
-      '[{"name":"kiro","statePaths":[".kiro"],"launch":["kiro"],"npmPackage":null,"pinnedVersion":"9.9.9"}]',
+      '[{"name":"kiro","statePaths":[".kiro"],"launch":["kiro"],"npmPackage":null,"minimumVersion":"9.9.9"}]',
     ) as unknown;
     const extended = agentEngines(loadAgentCatalog(document));
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
@@ -39,7 +39,7 @@ describe('engine registries', () => {
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: 's', launch: ['x'] }])).toThrow(/statePaths/);
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: [] }])).toThrow(/launch/);
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: ['x'], npmPackage: 'p' }])).toThrow(/together/);
-    expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: ['x'], npmPackage: null, pinnedVersion: null }])).toThrow(/pinned version/);
+    expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: ['x'], npmPackage: null, minimumVersion: null }])).toThrow(/minimum version/);
   });
 });
 

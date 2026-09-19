@@ -116,7 +116,7 @@ export function imageHelp(): string {
 
 Commands:
   list         List local workspace images
-  build        Build a verified candidate from pinned versions
+  build        Build a verified candidate from current releases
   activate     Cut over to a candidate at the next start
   rollback     Re-activate the previous image
   prune        Remove unreferenced workspace images
@@ -240,13 +240,13 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     migrate: 'Usage: sandbox workspace migrate --source claude-relay [--apply]\n\nDry-run by default; originals are always retained.\n',
   },
   agent: {
-    list: 'Usage: sandbox agent list [--json, -j]\n\nList supported agents with their install channel and pinned version.\n',
-    outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, pinned, and latest versions. claude tracks the vendor release feed; the rest track npm.\n',
+    list: 'Usage: sandbox agent list [--json, -j]\n\nList supported agents with their install channel and minimum version.\n',
+    outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, minimum, and latest versions. claude tracks the vendor release feed; the rest track npm.\n',
     upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly.\n',
   },
   image: {
     list: 'Usage: sandbox image list [--json, -j]\n\nList local workspace images.\n',
-    build: 'Usage: sandbox image build\n\nBuild a verified candidate from pinned versions; activate explicitly afterwards.\n',
+    build: 'Usage: sandbox image build\n\nBuild a verified candidate from current releases; activate explicitly afterwards.\n',
     activate: 'Usage: sandbox image activate <digest>\n\nAsk for confirmation when instances are live; recreates the container on the new image at the next start.\n',
     rollback: 'Usage: sandbox image rollback <digest>\n\nAsk for confirmation when instances are live. Requires an earlier activation and does not reverse a data migration.\n',
     prune: 'Usage: sandbox image prune\n\nRemove workspace images no workspace references (current and previous are kept). Asks for confirmation.\n',

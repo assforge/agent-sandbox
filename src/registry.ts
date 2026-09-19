@@ -61,6 +61,12 @@ export interface WorkspaceEntry {
   /** Fork names with state under instances/. Pruned only explicitly. */
   forks: string[];
   /**
+   * Agent versions recorded from the image at activation, keyed like the
+   * version probe. Absent on pre-feature entries: never backfilled, the
+   * drift check skips workspaces without it.
+   */
+  agentVersions?: Record<string, string>;
+  /**
    * Absent means no operation is outstanding. Deliberately never backfilled:
    * unlike the fields below, absence here carries meaning, so a default would
    * invent a claim rather than repair one.
