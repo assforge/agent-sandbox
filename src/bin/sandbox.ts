@@ -768,7 +768,11 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
     deps.stderr(`skipped fork(s) that became live while confirming: ${skipped.join(', ')}\n`);
   }
   if (pruned.length === 0) {
-    deps.stdout('no forks pruned; every victim became live while confirming\n');
+    deps.stdout(
+      skipped.length > 0
+        ? 'no forks pruned; every victim became live while confirming\n'
+        : 'no forks pruned; nothing remained eligible\n',
+    );
     return 0;
   }
   deps.stdout(`pruned forks: ${pruned.join(', ')}; credential files kept\n`);

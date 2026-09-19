@@ -822,6 +822,42 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('reports honestly when fork victims vanish before deletion', async () => {
+    const { home, root, world, deps, out, err } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--name', 'w1', '--home', 'fork', '--no-attach'], deps)).toBe(0);
+      expect(await main(['workspace', 'close', 'w1', '--workspace', root], deps)).toBe(0);
+      const registryPath = join(home, '.agent.sandbox', 'registry.json');
+      const id = Object.keys(loadRegistry(registryPath).workspaces)[0] as string;
+      // A concurrent prune already took the fork: by deletion time the name
+      // is gone from the file, so there is nothing live to name either.
+      const racing = {
+        ...deps,
+        confirm: async () => {
+          const live = loadRegistry(registryPath);
+          const entry = live.workspaces[id];
+          if (entry) {
+            entry.forks = entry.forks.filter((fork) => fork !== 'w1');
+            saveRegistry(registryPath, live);
+          }
+          return true;
+        },
+      };
+      expect(await main(['workspace', 'prune', '--forks', '--workspace', root], racing)).toBe(0);
+      expect(out.join('')).toContain('nothing remained eligible');
+      expect(out.join('')).not.toContain('became live');
+      expect(err.join('')).not.toContain('skipped fork');
+      expect(
+        world.calls.some((call) => call.some((arg) => typeof arg === 'string' && arg.includes('/v/instances/w1'))),
+      ).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('still confirms close when list-sessions omits a live window', async () => {    const { home, root, world, deps } = setup();
     try {
       let confirms = 0;
