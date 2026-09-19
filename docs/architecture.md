@@ -131,8 +131,8 @@ built-in catalog — four entries, held as data
             latest read from the vendor release feed
             https://downloads.claude.ai/claude-code-releases/latest
   opencode  npm     opencode-ai@1.18.31   .config/opencode
-  codex     npm     @openai/codex@0.154.0 .codex
-  copilot   npm     @github/copilot@1.0.85
+  codex     npm     @openai/codex@0.155.1 .codex
+  copilot   npm     @github/copilot@1.0.86
                                           .copilot, .config/github-copilot
 
   grok, agy  named, never constructed: no verified linux install
