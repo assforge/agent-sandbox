@@ -1,5 +1,19 @@
 # @assforge/cogent-sandbox
 
+## 0.24.0
+
+### Minor Changes
+
+- 308b3e8: Add `image prune`: remove workspace images no workspace references
+  (current plus previous are kept) across every runtime in use, after
+  confirmation.
+
+### Patch Changes
+
+- 308b3e8: Doctor warns when project hooks or MCP servers reference commands
+  missing inside the running container, instead of failing obscurely
+  mid-session.
+
 ## 0.23.1
 
 ### Patch Changes
