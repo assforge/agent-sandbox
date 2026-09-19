@@ -126,7 +126,7 @@ AgentEngine     name, statePaths, launch, installSpec(), latestVersion()
   statePaths    home-relative dirs this agent owns (fork seeds, see §5)
   launch        argv vector, never a shell string
 
-built-in catalog — four entries, held as data
+built-in catalog — five entries, held as data
   claude    native  pinned 2.1.276        .claude
             latest read from the vendor release feed
             https://downloads.claude.ai/claude-code-releases/latest
@@ -254,7 +254,8 @@ line of defence.
 image (built from templates/Dockerfile, no secrets)
   base                     node:22-bookworm-slim
   apt                      git, ca-certificates, openssh-client, curl
-  npm globals (ARG-pinned) opencode-ai, @openai/codex, @github/copilot
+  npm globals (ARG-pinned) opencode-ai, @openai/codex, @github/copilot,
+                             @earendil-works/pi-coding-agent
   /opt/claude              claude via the vendor installer, ARG-pinned,
                            agent-owned; PATH gains /opt/claude/.local/bin
   agent user               uid 1001 (pinned); USER agent for the workload
@@ -272,7 +273,7 @@ container (per workspace, --cap-drop ALL, user agent)
 ```
 
 `sandbox-entrypoint.sh` is where a home's shape is decided: it deletes any
-stale `ready.json`, creates `.claude`, `.codex`, `.copilot`,
+stale `ready.json`, creates `.claude`, `.codex`, `.copilot`, `.pi`,
 `.config/opencode`, `.config/github-copilot`, `work`, and `instances`
 under `$HOME`, and only then writes the token and `exec`s the command. It
 refuses to run without `SANDBOX_GENERATION` and
@@ -326,6 +327,7 @@ never launches an agent.
   .claude/                     claude state
   .codex/                      codex state
   .copilot/                    copilot state
+  .pi/                         pi state
   .config/opencode/            opencode state
   .config/github-copilot/      copilot state
   work/                        the image's WORKDIR
@@ -346,7 +348,7 @@ Per-instance HOME modes, recorded on the roster entry at birth:
 shared   HOME=/home/agent. Default, including old entries without
          a recorded mode. Full continuity; do not run concurrent
          writers against the same files.
-fork     On first launch, for each of .claude, .codex, .copilot and
+fork     On first launch, for each of .claude, .codex, .copilot, .pi and
          .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.
@@ -357,7 +359,7 @@ fresh    Empty room. Nothing is copied, nothing is shared.
 ```
 
 The copy is unfiltered. A comment in `lifecycle.ts` calls the fork list
-"caches excluded", and no code excludes them: everything under those four
+"caches excluded", and no code excludes them: everything under those five
 directories is copied. Read that comment as intent, not as behaviour.
 
 Secrets stay orthogonal: credential files live host-side and inject as
@@ -370,7 +372,7 @@ removes orphan fork directories (credential files never).
 ```
 pins (engine catalog) --> build args <AGENT>_VERSION, one per agent
   --> build (docker or apple)
-  --> inspect: the four CLI versions must equal the expected four
+  --> inspect: the five CLI versions must equal the expected five
   --> verify: the entrypoint is executable, and -- on the `image build`
       path only -- a throwaway run wrote a ready.json carrying the
       generation it was given

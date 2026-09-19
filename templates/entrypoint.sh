@@ -17,6 +17,7 @@ mkdir -p \
   "$HOME/.claude" \
   "$HOME/.codex" \
   "$HOME/.copilot" \
+  "$HOME/.pi" \
   "$HOME/.config/opencode" \
   "$HOME/.config/github-copilot" \
   "$HOME/work" \
