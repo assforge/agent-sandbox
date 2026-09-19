@@ -8,7 +8,7 @@ import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
 import { emptyRegistry, registerWorkspace } from '../src/registry.js';
-import { activateImage, buildCandidate, parseInspectedVersions, recordActivation, rollbackImage } from '../src/image.js';
+import { activateImage, buildCandidate, compareVersions, formatVersionReceipt, parseInspectedVersions, recordActivation, rollbackImage, versionAtLeast } from '../src/image.js';
 import { acquireLock } from '../src/lock.js';
 import { assertWindowName } from '../src/terminal.js';
 import { dryRunMigration } from '../src/migrate.js';
@@ -18,9 +18,9 @@ import { agentHelp, describeAction, imageHelp, topHelp, workspaceHelp } from '..
 describe('agents', () => {
   const engines = agentEngines();
 
-  it('pins exact npm versions and rejects unsupported agents', () => {
-    expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', pinnedVersion: '0.155.1' });
-    expect(agentEngine(engines, 'pi').installSpec()).toMatchObject({ npmPackage: '@earendil-works/pi-coding-agent', pinnedVersion: '0.85.1' });
+  it('floors npm versions and rejects unsupported agents', () => {
+    expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', minimumVersion: '0.155.1' });
+    expect(agentEngine(engines, 'pi').installSpec()).toMatchObject({ npmPackage: '@earendil-works/pi-coding-agent', minimumVersion: '0.85.1' });
     expect(agentEngine(engines, 'pi').launch).toEqual(['pi']);
     expect(() => agentEngine(engines, 'grok')).toThrow(/no verified linux install channel/);
     expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
@@ -33,22 +33,22 @@ describe('agents', () => {
       fetchText: () => '9.9.9',
     }, engines.values());
     expect(entries).toHaveLength(5);
-    expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, pinned: '2.1.276', latest: '9.9.9' });
-    expect(entries[1]).toMatchObject({ agent: 'opencode', pinned: '1.18.31' });
-    expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', pinned: '0.85.1' });
+    expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, minimum: '2.1.276', latest: '9.9.9' });
+    expect(entries[1]).toMatchObject({ agent: 'opencode', minimum: '1.18.31' });
+    expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', minimum: '0.85.1' });
     expect(() => agentEngine(engines, 'agy')).toThrow(/no verified linux install channel/);
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
   });
 
   it('adds a sixth agent through data alone', () => {
-    const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: '9.9.9', latestEndpoint: null }]);
+    const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, minimumVersion: '9.9.9', latestEndpoint: null }]);
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
-    expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.155.1');
+    expect(agentEngine(extended, 'codex').installSpec().minimumVersion).toBe('0.155.1');
   });
 
   it('refuses an unsupported agent however it reaches the registry', () => {
-    const grok = { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, pinnedVersion: '1.0.0', latestEndpoint: null };
+    const grok = { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, minimumVersion: '1.0.0', latestEndpoint: null };
     // A user catalog document declaring grok/agy fails closed at load.
     expect(() => loadAgentCatalog([grok])).toThrow(/not supported in containers/);
     expect(() => loadAgentCatalog([{ ...grok, name: 'agy' }])).toThrow(/not supported in containers/);
@@ -118,15 +118,53 @@ describe('config', () => {
 });
 
 describe('image lifecycle', () => {
-  it('builds a candidate with pinned args and verifies versions', () => {
-    const seen: string[] = [];
+  it('builds a candidate with latest-first args and verifies floors', () => {
+    const seen: Array<Record<string, string>> = [];
+    const inspect = {
+      claude: '2.1.278',
+      'opencode-ai': '1.18.31',
+      '@openai/codex': '9.9.9',
+      '@github/copilot': '1.0.86',
+      '@earendil-works/pi-coding-agent': '0.85.1',
+    };
     const result = buildCandidate(
       {
-        buildImage: (plan) => {
-          seen.push(plan.tag);
-          expect(plan.buildArgs['CODEX_VERSION']).toBe('0.155.1');
-          expect(plan.buildArgs['PI_VERSION']).toBe('0.85.1');
-          expect(plan.buildArgs['OPENCODE_VERSION']).toBe('1.18.31');
+        buildImage: (plan: { tag: string; buildArgs: Record<string, string> }) => {
+          seen.push(plan.buildArgs);
+          // Latest-first: no version args unless the caller overrides one.
+          expect(plan.buildArgs).toEqual({});
+          return plan.tag;
+        },
+        inspectBinaryVersions: () => inspect,
+        verifyCandidate: () => true,
+      },
+      '/ctx',
+      'sandbox:candidate',
+      agentEngines().values(),
+    );
+    expect(result.tag).toBe('sandbox:candidate');
+    // Newer-than-floor versions pass and come back as the build receipt.
+    expect(result.versions).toMatchObject(inspect);
+    const overridden = buildCandidate(
+      {
+        buildImage: (plan: { tag: string; buildArgs: Record<string, string> }) => plan.tag,
+        inspectBinaryVersions: () => inspect,
+        verifyCandidate: () => true,
+      },
+      '/ctx',
+      'sandbox:override',
+      agentEngines().values(),
+      { '@openai/codex': '0.155.1' },
+    );
+    expect(overridden.tag).toBe('sandbox:override');
+  });
+
+  it('passes overrides through as build args', () => {
+    const seen: Array<Record<string, string>> = [];
+    buildCandidate(
+      {
+        buildImage: (plan: { tag: string; buildArgs: Record<string, string> }) => {
+          seen.push(plan.buildArgs);
           return plan.tag;
         },
         inspectBinaryVersions: () => ({
@@ -141,22 +179,21 @@ describe('image lifecycle', () => {
       '/ctx',
       'sandbox:candidate',
       agentEngines().values(),
+      { '@openai/codex': '0.155.1', claude: '2.1.276' },
     );
-    expect(result.tag).toBe('sandbox:candidate');
-    expect(seen).toEqual(['sandbox:candidate']);
-    expect(recordActivation('old', 'new')).toEqual({ previous: 'old', current: 'new' });
+    expect(seen[0]).toMatchObject({ CODEX_VERSION: '0.155.1', CLAUDE_VERSION: '2.1.276' });
   });
 
-  it('fails the candidate on version mismatch or failed verification', () => {
+  it('fails the candidate on a missing version, a floor breach, or failed verification', () => {
     const runner = {
       buildImage: (plan: { tag: string }) => plan.tag,
       inspectBinaryVersions: () => ({}),
       verifyCandidate: () => true,
     };
-    expect(() => buildCandidate(runner, '/ctx', 't', agentEngines().values())).toThrow(/expected/);
+    expect(() => buildCandidate(runner, '/ctx', 't', agentEngines().values())).toThrow(/no version/);
     expect(() =>
       buildCandidate({ ...runner, inspectBinaryVersions: () => ({ claude: '2.1.276', 'opencode-ai': '0.0.0' }) }, '/ctx', 't', agentEngines().values()),
-    ).toThrow(/0\.0\.0/);
+    ).toThrow(/below minimum/);
   });
 
   it('fails the candidate when independent verification rejects it', () => {
@@ -195,7 +232,7 @@ describe('image lifecycle', () => {
     });
   });
 
-  it('includes the native claude agent in build args and expected versions', () => {
+  it('sends no version args by default and floors the native claude agent', () => {
     const seenArgs: Record<string, string>[] = [];
     buildCandidate(
       {
@@ -204,7 +241,7 @@ describe('image lifecycle', () => {
           return plan.tag;
         },
         inspectBinaryVersions: () => ({
-          claude: '2.1.276',
+          claude: '9.9.9',
           'opencode-ai': '1.18.31',
           '@openai/codex': '0.155.1',
           '@github/copilot': '1.0.86',
@@ -216,16 +253,33 @@ describe('image lifecycle', () => {
       't',
       agentEngines().values(),
     );
-    expect(seenArgs[0]).toMatchObject({ CLAUDE_VERSION: '2.1.276' });
+    expect(seenArgs[0]).toEqual({});
+  });
+
+  it('compares versions numerically and fails closed on garbage', () => {
+    expect(compareVersions('1.18.31', '1.18.31')).toBe(0);
+    expect(compareVersions('0.155.1', '0.154.0')).toBe(1);
+    expect(compareVersions('1.0.86', '1.0.9')).toBe(1);
+    expect(compareVersions('2.1.276', '2.1.278')).toBe(-1);
+    expect(compareVersions('1.0', '1.0.0')).toBeNull();
+    expect(compareVersions('latest', '1.0.0')).toBeNull();
+    expect(versionAtLeast('0.155.1', '0.155.1')).toBe(true);
+    expect(versionAtLeast('9.9.9', '0.155.1')).toBe(true);
+    expect(versionAtLeast('0.154.0', '0.155.1')).toBe(false);
+    expect(versionAtLeast('???', '0.155.1')).toBe(false);
+    expect(formatVersionReceipt({ a: '1.0.0', b: '2.0.0' })).toBe('a@1.0.0, b@2.0.0');
   });
 
   it('activates explicitly and rolls back without reversing data', () => {
     const registry = emptyRegistry();
     const entry = registerWorkspace(registry, '/w', []);
+    expect(recordActivation('old', 'new')).toEqual({ previous: 'old', current: 'new' });
     expect(() => rollbackImage(entry)).toThrow(/no previous image/);
     expect(activateImage(entry, 'sha256:new')).toEqual({ previous: null, current: 'sha256:new' });
     expect(entry.image).toBe('sha256:new');
-    expect(activateImage(entry, 'sha256:newer')).toEqual({ previous: 'sha256:new', current: 'sha256:newer' });
+    expect(entry.agentVersions).toBeUndefined();
+    expect(activateImage(entry, 'sha256:newer', { claude: '2.1.278' })).toEqual({ previous: 'sha256:new', current: 'sha256:newer' });
+    expect(entry.agentVersions).toEqual({ claude: '2.1.278' });
     expect(rollbackImage(entry)).toEqual({ previous: 'sha256:newer', current: 'sha256:new' });
     expect(entry.image).toBe('sha256:new');
   });
