@@ -154,7 +154,11 @@ restart:
 Nothing is rebuilt and no pointer moves. Volumes, roster, and tmux
 windows are untouched; dead panes come back through `reopen`. `stop`
 leaves the container present-but-stopped, so the next start must prove a
-fresh timestamp rather than a fresh creation.
+fresh timestamp rather than a fresh creation. One exception: a stopped
+container cannot be exec'd, so drift that happened while it was down is
+only visible after start, when its recorded fingerprint can be read. The
+first fingerprint seen that does not match recreates the container once
+instead of waiting out the probes on a file that can never match.
 
 ## 4a. Agent upgrade (`sandbox agent upgrade all`)
 

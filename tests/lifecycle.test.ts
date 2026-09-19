@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { main, type MainDeps } from '../src/bin/sandbox.js';
 import { containerState } from '../src/docker.js';
 import type { RunResult } from '../src/docker.js';
-import { emptyRegistry, loadRegistry, registerWorkspace } from '../src/registry.js';
+import { lockPath } from '../src/lock.js';
+import { emptyRegistry, loadRegistry, registerWorkspace, saveRegistry } from '../src/registry.js';
 
 /** Scripted docker+tmux world. Captures env from docker run; serves ready.json accordingly. */
 class FakeWorld {
@@ -783,8 +784,45 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
-  it('still confirms close when list-sessions omits a live window', async () => {
-    const { home, root, world, deps } = setup();
+  it('skips a fork that goes live while prune is confirming', async () => {
+    const { home, root, world, deps, out, err } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--name', 'w1', '--home', 'fork', '--no-attach'], deps)).toBe(0);
+      expect(await main(['workspace', 'close', 'w1', '--workspace', root], deps)).toBe(0);
+      const registryPath = join(home, '.agent.sandbox', 'registry.json');
+      const id = Object.keys(loadRegistry(registryPath).workspaces)[0] as string;
+      expect(loadRegistry(registryPath).workspaces[id]?.forks).toEqual(['w1']);
+      // Reopen w1 while the prune prompt is on screen. Victims were chosen
+      // before the prompt; the in-lock re-check must skip the live fork
+      // instead of deleting a directory that is back in use.
+      const racing = {
+        ...deps,
+        confirm: async () => {
+          const live = loadRegistry(registryPath);
+          const entry = live.workspaces[id];
+          if (entry && !entry.instances.some((item) => item.name === 'w1')) {
+            entry.instances.push({ name: 'w1', kind: 'codex', window: 'w1' });
+            saveRegistry(registryPath, live);
+          }
+          return true;
+        },
+      };
+      expect(await main(['workspace', 'prune', '--forks', '--workspace', root], racing)).toBe(0);
+      expect(err.join('')).toContain('skipped fork(s) that became live');
+      expect(loadRegistry(registryPath).workspaces[id]?.forks).toEqual(['w1']);
+      expect(
+        world.calls.some((call) => call.some((arg) => typeof arg === 'string' && arg.includes('/v/instances/w1'))),
+      ).toBe(false);
+      expect(out.join('')).toContain('no forks pruned');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still confirms close when list-sessions omits a live window', async () => {    const { home, root, world, deps } = setup();
     try {
       let confirms = 0;
       const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
@@ -931,6 +969,38 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('recreates a stopped container whose fingerprint drifted instead of timing out', async () => {
+    const { home, root, world, deps, out } = setup();
+    const extra = mkdtempSync(join(tmpdir(), 'sandbox-mount-'));
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const container = `sandbox-${id}`;
+      const first = world.containers.get(container)?.fingerprint ?? '';
+      expect(first).not.toBe('');
+      expect(await main(['workspace', 'stop', '--workspace', root], deps)).toBe(0);
+      expect(world.containers.get(container)?.running).toBe(false);
+      // Drift while down is invisible: a stopped container cannot be exec'd,
+      // so the pre-start check reads nothing and lets it through.
+      expect(await main(['workspace', 'configure', '--workspace', root, '--add-mount', extra], deps)).toBe(0);
+      const rmsBefore = world.calls.filter((call) => call[0] === 'docker' && call[1] === 'rm').length;
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      // The first fingerprint seen after start cannot match, so the stale
+      // container is recreated once instead of waited out until timeout.
+      expect(out.join('')).toContain('ready');
+      expect(world.containers.get(container)?.fingerprint).not.toBe(first);
+      expect(world.containers.get(container)?.running).toBe(true);
+      expect(world.calls.filter((call) => call[0] === 'docker' && call[1] === 'rm').length).toBe(rmsBefore + 1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+      rmSync(extra, { recursive: true, force: true });
+    }
+  });
+
   it('probes the workspace network through the workspace runtime, not docker', async () => {
     const { home, root, world, deps } = setup();
     try {
@@ -1020,8 +1090,37 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
-  it('selects runtimes and records per-workspace overrides', async () => {
-    const { home, root, world, deps, out, err } = setup();
+  it('holds the workspace lock while retiring the previous engine', async () => {
+    const { home, root, world, deps } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      // Without the lock a concurrent start holding it could have its
+      // container yanked mid-flight by this retirement.
+      let lockedDuringRemove: boolean | null = null;
+      const spying = {
+        ...deps,
+        runner: {
+          run: (command: string, args: string[]) => {
+            if (command === 'docker' && args[0] === 'rm') {
+              lockedDuringRemove = existsSync(lockPath(join(home, 'locks'), id));
+            }
+            return world.run(command, args);
+          },
+        },
+      };
+      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'apple'], spying)).toBe(0);
+      expect(lockedDuringRemove).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('selects runtimes and records per-workspace overrides', async () => {    const { home, root, world, deps, out, err } = setup();
     try {
       expect(await main(['runtime', 'list'], deps)).toBe(0);
       expect(out.join('')).toContain('docker (selected)');

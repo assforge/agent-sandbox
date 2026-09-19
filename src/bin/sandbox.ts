@@ -724,6 +724,7 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
   const approved = await deps.confirm(`remove ${victims.length} orphan fork(s): ${names}? Credential files are kept.`);
   if (!approved) throw new CliError('prune cancelled; nothing was changed', 1);
   const skipped: string[] = [];
+  const pruned: string[] = [];
   for (const item of victims) {
     const handle = acquireLock(deps.lockDir, item.entry.id);
     try {
@@ -757,6 +758,7 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
         if (!target) return;
         if (target.instances.some((instance) => instance.name === item.fork)) return;
         target.forks = target.forks.filter((fork) => fork !== item.fork);
+        pruned.push(`${item.entry.id}:${item.fork}`);
       });
     } finally {
       handle.release();
@@ -765,7 +767,11 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
   if (skipped.length > 0) {
     deps.stderr(`skipped fork(s) that became live while confirming: ${skipped.join(', ')}\n`);
   }
-  deps.stdout(`pruned forks: ${names}; credential files kept\n`);
+  if (pruned.length === 0) {
+    deps.stdout('no forks pruned; every victim became live while confirming\n');
+    return 0;
+  }
+  deps.stdout(`pruned forks: ${pruned.join(', ')}; credential files kept\n`);
   return 0;
 }
 
@@ -1165,30 +1171,39 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       // runtime switch invalidates the windows even when the terminal engine
       // does not change. Retiring before the save keeps a failed retirement
       // from recording a switch that never happened.
-      const previousRt = selectRuntime(deps, entry);
-      const previousTerm = selectTerminal(deps, entry);
-      const runtimeChanges = runtime !== undefined && runtime !== entry.runtime;
-      const terminalChanges = terminal !== undefined && terminal !== entry.terminal;
-      if (runtimeChanges || terminalChanges) {
-        if (runtimeChanges) {
-          const state = previousRt.containerState(deps.runner, entry.container, entry.id);
-          if (state === 'running') previousRt.stopContainer(deps.runner, entry.container);
-          if (state === 'running' || state === 'stopped') previousRt.removeContainer(deps.runner, entry.container);
+      //
+      // The retirement runs under the workspace lock: without it a
+      // concurrent start or launch holding the same lock could have its
+      // container yanked mid-flight by this command.
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        const previousRt = selectRuntime(deps, entry);
+        const previousTerm = selectTerminal(deps, entry);
+        const runtimeChanges = runtime !== undefined && runtime !== entry.runtime;
+        const terminalChanges = terminal !== undefined && terminal !== entry.terminal;
+        if (runtimeChanges || terminalChanges) {
+          if (runtimeChanges) {
+            const state = previousRt.containerState(deps.runner, entry.container, entry.id);
+            if (state === 'running') previousRt.stopContainer(deps.runner, entry.container);
+            if (state === 'running' || state === 'stopped') previousRt.removeContainer(deps.runner, entry.container);
+          }
+          if (previousTerm.sessionAlive(deps.runner, entry.session)) previousTerm.killSession(deps.runner, entry.session);
         }
-        if (previousTerm.sessionAlive(deps.runner, entry.session)) previousTerm.killSession(deps.runner, entry.session);
+        withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          if (addMount) {
+            const canonical = defaultCanonicalize(addMount);
+            if (!target.mounts.includes(canonical)) target.mounts.push(canonical);
+          }
+          if (network !== undefined) target.network = network;
+          if (runtime !== undefined) target.runtime = runtime;
+          if (terminal !== undefined) target.terminal = terminal;
+          if (dropMount) dropMountFromEntry(target, dropMount);
+        });
+      } finally {
+        handle.release();
       }
-      withRegistry(deps, (live) => {
-        const target = live.workspaces[entry.id];
-        if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
-        if (addMount) {
-          const canonical = defaultCanonicalize(addMount);
-          if (!target.mounts.includes(canonical)) target.mounts.push(canonical);
-        }
-        if (network !== undefined) target.network = network;
-        if (runtime !== undefined) target.runtime = runtime;
-        if (terminal !== undefined) target.terminal = terminal;
-        if (dropMount) dropMountFromEntry(target, dropMount);
-      });
       return 0;
     }
     case 'mount': {

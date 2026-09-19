@@ -318,6 +318,11 @@ describe('locks and backups', () => {
       expect(restored.forks).toEqual(['w1']);
       expect(registry.workspaces[entry.id]).toBe(restored);
       expect(calls).toHaveLength(2);
+      // The trailing `/.` is load-bearing, not cosmetic: without it the
+      // runtime nests the source directory inside the destination and a
+      // restore reproduces `/home/agent/home/agent/...`.
+      expect(calls[0]).toBe(`from:${entry.container}:/home/agent/.:${join(out, 'home')}`);
+      expect(calls[1]).toBe(`to:${entry.container}:${join(out, 'home')}/.:/home/agent`);
       expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'))).toThrow(/missing or invalid/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -335,6 +340,16 @@ describe('locks and backups', () => {
         'utf8',
       );
       expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), out)).toThrow(/unsafe id/);
+      // A fork name later reaches fork pruning, so the restore boundary
+      // enforces the shared safe-name charset there as well.
+      const sneaky = join(dir, 'sneaky');
+      mkdirSync(sneaky, { recursive: true });
+      writeFileSync(
+        join(sneaky, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: ['/w'], forks: ['../evil'] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), sneaky)).toThrow(/unsafe forks/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

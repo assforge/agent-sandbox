@@ -133,7 +133,7 @@ export function ensureReady(
       state = 'absent';
     }
   }
-  if (state === 'absent') {
+  function create(): void {
     runtime.createContainer(runner, entry, {
       image: options.image,
       mounts: entry.mounts.length > 0 ? entry.mounts : [entry.root],
@@ -143,6 +143,9 @@ export function ensureReady(
       generation,
       fingerprint,
     });
+  }
+  if (state === 'absent') {
+    create();
     for (let i = 0; i < attempts; i += 1) {
       const observed = runtime.readReadyJson(runner, entry.container);
       if (checkReadiness({ generation, fingerprint }, observed, true)) {
@@ -165,6 +168,7 @@ export function ensureReady(
   const wasStopped = state === 'stopped';
   const startEpoch = Math.floor(Date.now() / 1000);
   runtime.startContainer(runner, entry.container);
+  let recreated = false;
   for (let i = 0; i < attempts; i += 1) {
     const observed = runtime.readReadyJson(runner, entry.container);
     if (!observed) {
@@ -177,6 +181,16 @@ export function ensureReady(
       continue;
     }
     if (observed.fingerprint !== fingerprint) {
+      // A stopped container cannot be exec'd, so drift that happened while
+      // it was down is only visible now that it runs again: recreate once
+      // instead of waiting out the probes on a file that can never match.
+      if (!recreated) {
+        recreated = true;
+        runtime.removeContainer(runner, entry.container);
+        create();
+        i = -1;
+        continue;
+      }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
       continue;
     }
