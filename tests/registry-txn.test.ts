@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -229,10 +229,17 @@ describe('registry transaction', () => {
     }
   });
 
-  it('leaves src/bin/sandbox.ts no direct way to write the registry', () => {
-    const source = readFileSync(new URL('../src/bin/sandbox.ts', import.meta.url), 'utf8');
-    expect(source).not.toContain('saveRegistry');
-    expect(source).toContain("from '../registry-txn.js'");
+  it('leaves the CLI no direct way to write the registry', () => {
+    // The entry point moved to src/commands/, so the invariant covers the
+    // whole command layer: registry writes go through withRegistryTxn only.
+    const dir = new URL('../src/commands/', import.meta.url);
+    const files = ['../src/bin/sandbox.ts', ...readdirSync(dir).map((file) => `../src/commands/${file}`)];
+    for (const file of files) {
+      const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+      expect(source).not.toContain('saveRegistry');
+    }
+    const lookup = readFileSync(new URL('../src/commands/lookup.ts', import.meta.url), 'utf8');
+    expect(lookup).toContain("from '../registry-txn.js'");
 
     const primitive = readFileSync(new URL('../src/registry-txn.ts', import.meta.url), 'utf8');
     expect(primitive.match(/saveRegistry\(/g) ?? []).toHaveLength(1);
