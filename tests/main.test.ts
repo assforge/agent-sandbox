@@ -68,6 +68,34 @@ describe('main', () => {
     }
   });
 
+  it('refuses a tampered restore root with exit code 2 and leaves the registry untouched', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
+    try {
+      const registry = emptyRegistry();
+      registry.workspaces['w'] = {
+        id: 'w', root: '/w', container: 'c', image: null, previousImage: null,
+        session: 's', instances: [], homeVolume: 'v', network: 'open',
+        runtime: 'docker', terminal: 'tmux', mounts: [], forks: [],
+      };
+      const registryPath = join(home, '.agent.sandbox', 'registry.json');
+      saveRegistry(registryPath, registry);
+      const before = readFileSync(registryPath, 'utf8');
+      const input = join(home, 'input');
+      mkdirSync(input, { recursive: true });
+      writeFileSync(
+        join(input, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: join(home, '.agent.sandbox', 'stolen'), container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [] }),
+        'utf8',
+      );
+      const d = deps({ homeDir: home });
+      expect(await main(['workspace', 'restore', '--input', input], d)).toBe(2);
+      expect(d.err.join('')).toMatch(/refused root/);
+      expect(readFileSync(registryPath, 'utf8')).toBe(before);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed with exit 2 on a corrupt registry', async () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
     try {

@@ -393,6 +393,32 @@ describe('locks and backups', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('stores the vetted canonical root and mounts on restore', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sandbox-restore-'));
+    try {
+      const home = realpathSync(dir);
+      const target = join(dir, 'target');
+      mkdirSync(target, { recursive: true });
+      // A symlink root pointing at an allowed directory restores, but the
+      // entry keeps the realpath: a link swapped between restore and start
+      // must not redirect the next bind.
+      const linkRoot = join(dir, 'linkroot');
+      symlinkSync(target, linkRoot);
+      const input = join(dir, 'input');
+      mkdirSync(input, { recursive: true });
+      writeFileSync(
+        join(input, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: linkRoot, container: 'c', session: 's', homeVolume: 'v', mounts: [linkRoot], forks: [] }),
+        'utf8',
+      );
+      const entry = restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), input, home);
+      expect(entry.root).toBe(realpathSync(target));
+      expect(entry.mounts).toEqual([realpathSync(target)]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('help', () => {
