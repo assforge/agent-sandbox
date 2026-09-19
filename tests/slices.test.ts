@@ -19,7 +19,7 @@ describe('agents', () => {
   const engines = agentEngines();
 
   it('pins exact npm versions and rejects unsupported agents', () => {
-    expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', pinnedVersion: '0.154.0' });
+    expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', pinnedVersion: '0.155.1' });
     expect(() => agentEngine(engines, 'grok')).toThrow(/no verified linux install channel/);
     expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
   });
@@ -41,7 +41,7 @@ describe('agents', () => {
   it('adds a fifth agent through data alone', () => {
     const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: '9.9.9', latestEndpoint: null }]);
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
-    expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.154.0');
+    expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.155.1');
   });
 
   it('refuses an unsupported agent however it reaches the registry', () => {
@@ -121,15 +121,15 @@ describe('image lifecycle', () => {
       {
         buildImage: (plan) => {
           seen.push(plan.tag);
-          expect(plan.buildArgs['CODEX_VERSION']).toBe('0.154.0');
+          expect(plan.buildArgs['CODEX_VERSION']).toBe('0.155.1');
           expect(plan.buildArgs['OPENCODE_VERSION']).toBe('1.18.31');
           return plan.tag;
         },
         inspectBinaryVersions: () => ({
           claude: '2.1.276',
           'opencode-ai': '1.18.31',
-          '@openai/codex': '0.154.0',
-          '@github/copilot': '1.0.85',
+          '@openai/codex': '0.155.1',
+          '@github/copilot': '1.0.86',
         }),
         verifyCandidate: () => true,
       },
@@ -162,8 +162,8 @@ describe('image lifecycle', () => {
           inspectBinaryVersions: () => ({
             claude: '2.1.276',
             'opencode-ai': '1.18.31',
-            '@openai/codex': '0.154.0',
-            '@github/copilot': '1.0.85',
+            '@openai/codex': '0.155.1',
+            '@github/copilot': '1.0.86',
           }),
           verifyCandidate: () => false,
         },
@@ -185,8 +185,8 @@ describe('image lifecycle', () => {
         inspectBinaryVersions: () => ({
           claude: '2.1.276',
           'opencode-ai': '1.18.31',
-          '@openai/codex': '0.154.0',
-          '@github/copilot': '1.0.85',
+          '@openai/codex': '0.155.1',
+          '@github/copilot': '1.0.86',
         }),
         verifyCandidate: () => true,
       },

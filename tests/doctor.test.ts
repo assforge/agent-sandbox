@@ -54,7 +54,7 @@ describe('runDoctor', () => {
 
   it('warns when running agents drift from pinned versions and ignores the rest', () => {
     expect(driftChecks({})).toEqual([]);
-    expect(driftChecks({ claude: '2.1.276', 'opencode-ai': '1.18.31', '@openai/codex': '0.154.0', '@github/copilot': '1.0.85' })).toEqual([]);
+    expect(driftChecks({ claude: '2.1.276', 'opencode-ai': '1.18.31', '@openai/codex': '0.155.1', '@github/copilot': '1.0.86' })).toEqual([]);
     const drifted = driftChecks({ claude: '2.1.276', '@openai/codex': '9.9.9', 'some-future-agent': '1.0.0' });
     expect(drifted).toHaveLength(1);
     expect(drifted[0]).toMatchObject({ id: 'agent-drift-codex', status: 'warn', remediation: 'Run: sandbox workspace upgrade' });

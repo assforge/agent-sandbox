@@ -2,8 +2,8 @@
 # The host owns tmux windows and runs `docker exec` into this container,
 # so no tmux server runs inside the image.
 ARG OPENCODE_VERSION=1.18.31
-ARG CODEX_VERSION=0.154.0
-ARG COPILOT_VERSION=1.0.85
+ARG CODEX_VERSION=0.155.1
+ARG COPILOT_VERSION=1.0.86
 ARG CLAUDE_VERSION=2.1.276
 
 FROM node:22-bookworm-slim
