@@ -17,7 +17,7 @@ export type ParsedCommand =
   | { kind: 'image'; action: string; rest: string[]; workspace?: string; help: boolean }
   | { kind: 'update'; check: boolean; help: boolean };
 
-export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot'] as const;
+export const SUPPORTED_AGENTS = ['claude', 'opencode', 'codex', 'copilot', 'pi'] as const;
 /** Long-standing action aliases resolve to their canonical short form. */
 export function canonicalAction(group: string, action: string): string {
   if (group === 'workspace' && action === 'register') return 'link';

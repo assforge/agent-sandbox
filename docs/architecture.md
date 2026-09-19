@@ -134,6 +134,8 @@ built-in catalog — four entries, held as data
   codex     npm     @openai/codex@0.155.1 .codex
   copilot   npm     @github/copilot@1.0.86
                                           .copilot, .config/github-copilot
+  pi        npm     @earendil-works/pi-coding-agent@0.85.1
+                                          .pi/agent
 
   grok, agy  named, never constructed: no verified linux install
              channel (the host binaries are darwin-only)

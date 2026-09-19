@@ -8,7 +8,7 @@ import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
 import { emptyRegistry, registerWorkspace } from '../src/registry.js';
-import { activateImage, buildCandidate, recordActivation, rollbackImage } from '../src/image.js';
+import { activateImage, buildCandidate, parseInspectedVersions, recordActivation, rollbackImage } from '../src/image.js';
 import { acquireLock } from '../src/lock.js';
 import { assertWindowName } from '../src/terminal.js';
 import { dryRunMigration } from '../src/migrate.js';
@@ -20,6 +20,8 @@ describe('agents', () => {
 
   it('pins exact npm versions and rejects unsupported agents', () => {
     expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', pinnedVersion: '0.155.1' });
+    expect(agentEngine(engines, 'pi').installSpec()).toMatchObject({ npmPackage: '@earendil-works/pi-coding-agent', pinnedVersion: '0.85.1' });
+    expect(agentEngine(engines, 'pi').launch).toEqual(['pi']);
     expect(() => agentEngine(engines, 'grok')).toThrow(/no verified linux install channel/);
     expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
   });
@@ -30,15 +32,16 @@ describe('agents', () => {
       latestVersion: () => '9.9.9',
       fetchText: () => '9.9.9',
     }, engines.values());
-    expect(entries).toHaveLength(4);
+    expect(entries).toHaveLength(5);
     expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, pinned: '2.1.276', latest: '9.9.9' });
     expect(entries[1]).toMatchObject({ agent: 'opencode', pinned: '1.18.31' });
+    expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', pinned: '0.85.1' });
     expect(() => agentEngine(engines, 'agy')).toThrow(/no verified linux install channel/);
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
   });
 
-  it('adds a fifth agent through data alone', () => {
+  it('adds a sixth agent through data alone', () => {
     const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, pinnedVersion: '9.9.9', latestEndpoint: null }]);
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
     expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.155.1');
@@ -122,6 +125,7 @@ describe('image lifecycle', () => {
         buildImage: (plan) => {
           seen.push(plan.tag);
           expect(plan.buildArgs['CODEX_VERSION']).toBe('0.155.1');
+          expect(plan.buildArgs['PI_VERSION']).toBe('0.85.1');
           expect(plan.buildArgs['OPENCODE_VERSION']).toBe('1.18.31');
           return plan.tag;
         },
@@ -130,6 +134,7 @@ describe('image lifecycle', () => {
           'opencode-ai': '1.18.31',
           '@openai/codex': '0.155.1',
           '@github/copilot': '1.0.86',
+          '@earendil-works/pi-coding-agent': '0.85.1',
         }),
         verifyCandidate: () => true,
       },
@@ -164,6 +169,7 @@ describe('image lifecycle', () => {
             'opencode-ai': '1.18.31',
             '@openai/codex': '0.155.1',
             '@github/copilot': '1.0.86',
+            '@earendil-works/pi-coding-agent': '0.85.1',
           }),
           verifyCandidate: () => false,
         },
@@ -172,6 +178,21 @@ describe('image lifecycle', () => {
         agentEngines().values(),
       ),
     ).toThrow(/failed verification/);
+  });
+
+  it('parses the five-engine probe past the copilot update hint', () => {
+    // copilot 1.0.86 appends a stdout hint after its version line; it must
+    // not shift pi off position 5.
+    const versions = parseInspectedVersions(
+      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\n',
+    );
+    expect(versions).toMatchObject({
+      claude: '2.1.276',
+      'opencode-ai': '1.18.31',
+      '@openai/codex': '0.155.1',
+      '@github/copilot': '1.0.86',
+      '@earendil-works/pi-coding-agent': '0.85.1',
+    });
   });
 
   it('includes the native claude agent in build args and expected versions', () => {
@@ -187,6 +208,7 @@ describe('image lifecycle', () => {
           'opencode-ai': '1.18.31',
           '@openai/codex': '0.155.1',
           '@github/copilot': '1.0.86',
+          '@earendil-works/pi-coding-agent': '0.85.1',
         }),
         verifyCandidate: () => true,
       },

@@ -11,7 +11,7 @@ export const INSTANCE_HOME_BASE = '/home/agent/instances';
 export const SHARED_HOME = '/home/agent';
 
 /** Agent state directories forked on first launch (caches excluded). */
-export const FORK_STATE_DIRS = ['.claude', '.codex', '.copilot', '.config'];
+export const FORK_STATE_DIRS = ['.claude', '.codex', '.copilot', '.config', '.pi'];
 
 /** Per-instance HOME directory inside the container. */
 export function instanceHome(instance: string): string {

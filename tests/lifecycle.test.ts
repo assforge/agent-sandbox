@@ -163,7 +163,7 @@ class FakeWorld {
         const arg = (name: string, fallback: string): string => this.lastBuildArgs[name] ?? fallback;
         return {
           status: 0,
-          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.155.1')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n`,
+          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.155.1')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n${arg('PI_VERSION', '0.85.1')}\n`,
           stderr: '',
         };
       }
@@ -206,7 +206,7 @@ class FakeWorld {
     if (verb === 'exec' && rest.some((arg) => typeof arg === 'string' && arg.includes('claude --version'))) {
       return {
         status: 0,
-        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n',
+        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\n',
         stderr: '',
       };
     }
@@ -318,6 +318,7 @@ class FakeWorld {
         'opencode-ai': '1.18.31',
         '@openai/codex': '0.155.1',
         '@github/copilot': '1.0.86',
+        '@earendil-works/pi-coding-agent': '0.85.1',
       };
       return { status: 0, stdout: `${pinned[args[1] as string] ?? '9.9.9'}\n`, stderr: '' };
     }
@@ -529,7 +530,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).not.toContain('agent-drift');
-      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.86.\n';
+      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.86.\n0.85.1\n';
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('agent-drift-codex');
       expect(out.join('')).toContain('sandbox workspace upgrade');
