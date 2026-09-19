@@ -1,5 +1,14 @@
 # @assforge/cogent-sandbox
 
+## 0.22.5
+
+### Patch Changes
+
+- 32e39dc: Restore stores the vetted canonical root and mounts instead of the
+  manifest spelling, so a symlink swapped between restore and start cannot
+  redirect the next bind, and a refused backup path exits 2 like the
+  registration refusal it mirrors.
+
 ## 0.22.4
 
 ### Patch Changes
