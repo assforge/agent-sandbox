@@ -87,12 +87,15 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
 }
 
 /**
- * Restore a backup: reinstates the registry entry (recreating it when the
- * workspace was lost) and copies the home state back into the container.
- * The caller saves the registry under the workspace lock. The selected
+ * Parse and validate a backup's `workspace.json`, then apply it to the registry:
+ * reinstates the entry, recreating it when the workspace was lost. The selected
  * image is restored as recorded; data migrations are never reversed.
+ *
+ * Registry-only apart from the manifest read, so it is safe to run inside a short
+ * registry transaction. The home volume is copied separately by `copyRestoreHome`:
+ * a volume copy is slow and must never be held under the registry lock.
  */
-export function restoreWorkspace(runner: BackupRunner, registry: Registry, outputDir: string): WorkspaceEntry {
+export function planRestore(registry: Registry, outputDir: string): WorkspaceEntry {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(join(outputDir, 'workspace.json'), 'utf8'));
@@ -124,6 +127,23 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     forks,
   };
   registry.workspaces[id] = entry;
+  return entry;
+}
+
+/**
+ * Copy the snapshot's home directory back into the workspace container. This is the slow
+ * half of a restore, and it is deliberately outside the registry transaction.
+ */
+export function copyRestoreHome(runner: BackupRunner, entry: WorkspaceEntry, outputDir: string): void {
   runner.copyToContainer(entry.container, join(outputDir, 'home'), '/home/agent');
+}
+
+/**
+ * The composed form, for callers that want both halves in one step. The CLI uses the two
+ * halves separately so the registry write is never held across the copy.
+ */
+export function restoreWorkspace(runner: BackupRunner, registry: Registry, outputDir: string): WorkspaceEntry {
+  const entry = planRestore(registry, outputDir);
+  copyRestoreHome(runner, entry, outputDir);
   return entry;
 }

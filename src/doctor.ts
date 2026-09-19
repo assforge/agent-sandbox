@@ -36,6 +36,12 @@ export interface WorkspacePosture {
   deadWindows: string[];
   /** Agent versions inside the running container. Null skips the drift check. */
   runningVersions?: Record<string, string> | null;
+  /**
+   * An unfinished `restore`, precomputed by the caller as a state string plus the
+   * backup to re-run from. Kept as text rather than as a claim so the checks stay
+   * a pure function of the posture, and the wording stays with the claim itself.
+   */
+  pendingRestore?: { state: string; source: string } | null;
 }
 
 /**
@@ -125,6 +131,17 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
     summary: posture.image ? `Selected image digest ${posture.image}` : 'No image has been selected for this workspace',
     remediation: posture.image ? undefined : 'Run: sandbox image build',
   });
+  // Reported before the network block below, which returns early when no workspace is in
+  // scope: a frozen workspace must be reported even when the rest cannot be probed.
+  if (posture.pendingRestore) {
+    checks.push({
+      id: 'workspace-restore',
+      group: 'Workspace',
+      status: 'warn',
+      summary: `A restore of this workspace did not finish (${posture.pendingRestore.state}); its home is indeterminate and every other command refuses`,
+      remediation: `Run: sandbox workspace restore --input ${posture.pendingRestore.source}`,
+    });
+  }
   if (posture.network === null) {
     return checks;
   }  if (!posture.networkExists) {
