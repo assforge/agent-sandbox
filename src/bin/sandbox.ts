@@ -42,7 +42,7 @@ import { withRegistryTxn } from '../registry-txn.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { restoreClaimOf, restoreClaimState, restorePendingRefusal, restoreRerunCommand } from '../restore-claim.js';
 import { homeMovePending, migrateHomeDir, sandboxDir } from '../paths.js';
-import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
+import { collectProjectHookCommands, doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, linkHelp, credentialsHelp, describeAction, imageHelp, unlinkHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
 
 export class CliError extends Error {
@@ -177,6 +177,24 @@ export function inspectRunningVersions(deps: MainDeps, rt: RuntimeEngine, contai
   const probed = deps.runner.run(spec.command, spec.args);
   if (probed.status !== 0) return null;
   return parseInspectedVersions(probed.stdout);
+}
+
+/**
+ * Project hook commands missing inside the running container. One probe per
+ * binary via `$0` so config text never interpolates into shell. Null when
+ * the probe itself fails; empty means everything resolved.
+ */
+export function probeHookCommands(deps: MainDeps, rt: RuntimeEngine, container: string, workdir: string, commands: string[]): string[] | null {
+  const missing: string[] = [];
+  for (const command of commands) {
+    const spec = rt.execVector(container, { workdir, argv: ['sh', '-c', 'command -v "$0" >/dev/null 2>&1', command], tty: false });
+    const probed = deps.runner.run(spec.command, spec.args);
+    // A missing binary exits silently non-zero; execution-layer trouble
+    // brings stderr. Only the latter aborts the whole probe.
+    if (probed.status !== 0 && probed.stderr.trim().length > 0) return null;
+    if (probed.status !== 0) missing.push(command);
+  }
+  return missing;
 }
 
 /** Resolve engine defs by name, failing with exit 1 on unknown agents. */
@@ -472,8 +490,19 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       // Doctor never refuses on a claim and never clears one: it reports it, like `status`.
       const claim = current ? restoreClaimOf(current) : null;
       let runningVersions: Record<string, string> | null = null;
+      let unresolvedHookCommands: string[] | null = null;
       if (current && doctorRt.containerState(deps.runner, current.container, current.id) === 'running') {
         runningVersions = inspectRunningVersions(deps, doctorRt, current.container, current.root);
+        const wanted = collectProjectHookCommands((path) => {
+          try {
+            return readFileSync(path, 'utf8');
+          } catch {
+            return null;
+          }
+        }, current.root);
+        if (wanted.length > 0) {
+          unresolvedHookCommands = probeHookCommands(deps, doctorRt, current.container, current.root, wanted);
+        }
       }
       const checks = runDoctor(
         {
@@ -500,6 +529,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           networkInternal,
           deadWindows,
           runningVersions,
+          unresolvedHookCommands,
           pendingHomeMove: homeMovePending(deps.homeDir),
           pendingRestore: claim ? { state: restoreClaimState(claim), source: claim.source } : null,
         },
@@ -1776,6 +1806,44 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       } finally {
         handle.release();
       }
+    }
+    case 'prune': {
+      // Keep every image a workspace still references: current for the next
+      // start, previous for rollback. Everything else sandbox minted is fair
+      // game, across every runtime in use.
+      const keep = new Set<string>();
+      for (const entry of Object.values(registry.workspaces)) {
+        if (entry.image) keep.add(entry.image);
+        if (entry.previousImage) keep.add(entry.previousImage);
+      }
+      const runtimes = new Set(Object.values(registry.workspaces).map((item) => item.runtime));
+      runtimes.add(loadHostConfig(deps.homeDir).runtime);
+      const stale: Array<{ runtime: RuntimeEngine; image: string }> = [];
+      for (const name of runtimes) {
+        const engine = RUNTIME_ENGINES[name];
+        if (!engine) continue;
+        for (const image of engine.listWorkspaceImages(deps.runner)) {
+          if (!keep.has(image)) stale.push({ runtime: engine, image });
+        }
+      }
+      if (stale.length === 0) {
+        deps.stdout('no unreferenced workspace images\n');
+        return 0;
+      }
+      const approved = await deps.confirm(`remove ${stale.length} unreferenced workspace image(s)?`);
+      if (!approved) throw new CliError('prune cancelled; nothing was changed', 1);
+      let removed = 0;
+      for (const { runtime, image } of stale) {
+        try {
+          runtime.removeImage(deps.runner, image);
+        } catch (error) {
+          throw new CliError((error as Error).message, 1);
+        }
+        deps.stdout(`pruned ${image}\n`);
+        removed += 1;
+      }
+      deps.stdout(`pruned ${removed} image(s), kept ${keep.size} referenced\n`);
+      return 0;
     }
     default:
       throw new UsageError(`unknown image action: ${action}`);

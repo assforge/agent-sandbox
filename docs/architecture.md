@@ -380,6 +380,8 @@ pins (engine catalog) --> build args <AGENT>_VERSION, one per agent
   --> activate: the tag in use becomes the rollback target
   --> recreate on next start
   --> rollback re-activates the previous tag
+  --> prune: images no workspace references (current + previous kept)
+      are removed after confirmation, on every runtime in use
 ```
 
 `image build` uses the target workspace's runtime when `--workspace`

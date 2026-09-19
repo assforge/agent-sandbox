@@ -58,6 +58,19 @@ function digestOf(text: string): string | null {
   return match ? match[0] : null;
 }
 
+/** Best-effort image name from the containerization annotations. */
+function appleImageName(item: Record<string, unknown>): string | null {
+  const configuration = item['configuration'];
+  if (typeof configuration === 'object' && configuration !== null) {
+    const annotations = (configuration as Record<string, unknown>)['annotations'];
+    if (typeof annotations === 'object' && annotations !== null) {
+      const name = (annotations as Record<string, unknown>)['com.apple.containerization.image.name'];
+      if (typeof name === 'string' && name.length > 0) return name;
+    }
+  }
+  return appleName(item);
+}
+
 /** Best-effort resource name: verified configuration.name/id fields
  * first, value scan only as a last resort (label values can shadow). */
 function appleName(item: Record<string, unknown>): string | null {
@@ -297,6 +310,28 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
       return false;
     }
     return items.some((entry) => jsonStringLeaves(entry).includes(image));
+  },
+
+  listWorkspaceImages(runner) {
+    const listed = runner.run('container', ['image', 'list', '--format', 'json']);
+    if (listed.status !== 0) return [];
+    let items: Record<string, unknown>[];
+    try {
+      items = parseJsonArray(listed.stdout, 'image list');
+    } catch {
+      return [];
+    }
+    const names: string[] = [];
+    for (const item of items) {
+      const name = appleImageName(item);
+      if (name && name.startsWith('sandbox-workspace:')) names.push(name);
+    }
+    return names;
+  },
+
+  removeImage(runner, image) {
+    const removed = runner.run('container', ['image', 'delete', image]);
+    if (removed.status !== 0) throw new Error(`cannot remove image ${image}: ${errorOf(removed)}`);
   },
 
   listManagedContainers(runner) {

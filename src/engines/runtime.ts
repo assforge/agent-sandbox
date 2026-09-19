@@ -14,10 +14,12 @@ import {
   escapeFilterRegex,
   imageExists,
   listManagedContainers,
+  listWorkspaceImages,
   networkInternal,
   readReadyJson,
   referenceImageId,
   removeContainer,
+  removeImage,
   sameImageId,
   startContainer,
   stopContainer,
@@ -88,6 +90,10 @@ export interface RuntimeEngine {
   ) => { generation: string; fingerprint: string; startedAt: number } | null;
   imageExists: (runner: CommandRunner, image: string) => boolean;
   listManagedContainers: (runner: CommandRunner) => string[];
+  /** Local workspace images (repository prefix). Empty when undeterminable. */
+  listWorkspaceImages: (runner: CommandRunner) => string[];
+  /** Remove one local image. Throws on failure; the caller reports it. */
+  removeImage: (runner: CommandRunner, image: string) => void;
   listContainers: (runner: CommandRunner) => string[];
   listVolumes: (runner: CommandRunner) => string[];
   networkExists: (runner: CommandRunner, network: string) => boolean;
@@ -145,6 +151,8 @@ export const DockerRuntimeEngine: RuntimeEngine = {
   readReadyJson,
   imageExists,
   listManagedContainers,
+  listWorkspaceImages,
+  removeImage,
   listContainers: (runner) => {
     const listed = runner.run('docker', ['ps', '-a', '--format', '{{.Names}}']);
     if (listed.status !== 0) return [];

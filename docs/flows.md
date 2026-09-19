@@ -27,7 +27,7 @@ upgrade` · §4c `image build` · §5 `update` · §6 `workspace migrate` · §7
 `workspace backup` / `restore` · §8 `workspace close` / `prune` · §9
 `link` / `unlink` · §10 `workspace attach` / `exec` / `reopen` · §11
 `doctor` · §12 `workspace configure` · §13 `workspace mount` / `unmount` ·
-§14 `image activate` / `rollback` · §15 `runtime use` / `terminal use` /
+§14 `image activate` / `rollback` / `prune` · §15 `runtime use` / `terminal use` /
 `credentials set` / `clear`.
 
 **Read-only — `sandbox <group> help` is the reference.** `workspace list`,
@@ -490,6 +490,9 @@ workspace-windows     Workspace          WARN per dead roster window
 agent-drift-<agent>   Workspace          WARN when the running binary
                                          differs from its pin (local exec
                                          probe, no network)
+workspace-hooks       Workspace          WARN per project hook/MCP command
+                                         missing in the container (exec
+                                         probe of command -v, no network)
 ```
 
 `workspace-network` is the check worth reading closely: it is the only
@@ -582,13 +585,13 @@ mount change makes the next start **recreate** the container rather than
 leave one whose recorded environment the readiness loop could never
 match.
 
-## 14. Image pointer (`image build` / `activate` / `rollback`)
+## 14. Image pointer (`image build` / `activate` / `rollback` / `prune`)
 
 ```
 build:
   CLI --> runtime: build candidate (target workspace's runtime when
                    --workspace resolves, else the host default)
-  CLI --> candidate: inspect 4 CLI versions (must match the pins exactly)
+  CLI --> candidate: inspect 5 CLI versions (must match the pins exactly)
   CLI --> candidate: entrypoint + independent ready.json check
   CLI --> user: candidate verified; activate explicitly
   NOTE: no registry write. A build changes nothing that is in use.
@@ -613,6 +616,14 @@ rollback:
   locally. It only swaps pointers, so a previous tag that has been
   removed from the image store is still recorded -- and then fails at
   the next start, when ensureReady asks the runtime for its id.
+
+prune:
+  CLI --> runtimes: list sandbox-workspace images on every runtime in use
+  CLI --> registry: keep current + previous of every workspace
+  CLI --> user: [confirm] remove the unreferenced remainder
+  CLI --> runtime: rmi each; first failure aborts with exit 1
+  NOTE: no registry write. A pruned previous tag stays recorded (see
+  the rollback NOTE above).
 ```
 
 `workspace upgrade` (§4b) is the one command that does activate **and**
