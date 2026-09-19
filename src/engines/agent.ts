@@ -95,6 +95,12 @@ function validateCatalogEntry(value: unknown): AgentCatalogEntry {
   if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
     throw new Error(`agent catalog entry has an invalid name: ${String(name)}`);
   }
+  // Rejected at load, not only at lookup. agentEngines registers a user entry
+  // under its own name, so a catalog that declares `grok` produces a *successful*
+  // lookup and the guard in agentEngine never runs.
+  if ((UNSUPPORTED_AGENT_NAMES as readonly string[]).includes(name)) {
+    throw new Error(`agent catalog entry ${name} is not supported in containers (no verified linux install channel)`);
+  }
   if (!Array.isArray(statePaths) || !statePaths.every((item): item is string => typeof item === 'string' && item.length > 0)) {
     throw new Error(`agent catalog entry ${name} has invalid statePaths`);
   }
@@ -176,15 +182,15 @@ export function loadUserCatalog(homeDir: string): AgentCatalogEntry[] {
 }
 
 export function agentEngine(registry: Map<string, AgentEngine>, name: string): AgentEngine {
-  const found = registry.get(name);
-  if (!found) {
-    if ((UNSUPPORTED_AGENT_NAMES as readonly string[]).includes(name)) {
-      throw new Error(
-        `agent is not supported in containers: ${name} has no verified linux install channel (host binaries are darwin-only)`,
-      );
-    }
-    throw new Error(`unknown agent: ${name}`);
+  // Checked before the lookup, never after: a user catalog can register one of
+  // these names, and a successful lookup would then skip the guard entirely.
+  if ((UNSUPPORTED_AGENT_NAMES as readonly string[]).includes(name)) {
+    throw new Error(
+      `agent is not supported in containers: ${name} has no verified linux install channel (host binaries are darwin-only)`,
+    );
   }
+  const found = registry.get(name);
+  if (!found) throw new Error(`unknown agent: ${name}`);
   return found;
 }
 

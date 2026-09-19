@@ -111,19 +111,29 @@ export function ensureReady(
   }
   runtime.ensureNetwork(runner, network, entry.id, entry.network === 'restricted');
   if (state !== 'absent') {
-    // Cut over by recreating when the image or the network attachment no
-    // longer matches the running container. Runtime switches are already
-    // refused as foreign by containerState, so only image and network
-    // drift recreate here.
+    // Cut over by recreating when the running container no longer matches
+    // the configuration it must report. Runtime switches are already
+    // refused as foreign by containerState, so image, network, and
+    // fingerprint drift recreate here. ready.json is the container's own
+    // record of what it was created with, and `entry.mounts` feeds the
+    // fingerprint above -- so a mount change recreates instead of leaving
+    // a container whose environment the readiness loop below can never
+    // match. A container that predates the fingerprint reads as unknown
+    // and is left alone, which is the previous behaviour.
     const runningId = runtime.containerImageId(runner, entry.container);
     const desiredId = runtime.referenceImageId(runner, options.image);
     const attached = runtime.containerNetworks(runner, entry.container);
-    if ((runningId && desiredId && !sameImageId(runningId, desiredId)) || !attached.includes(network)) {
+    const recorded = runtime.readReadyJson(runner, entry.container)?.fingerprint;
+    if (
+      (runningId && desiredId && !sameImageId(runningId, desiredId)) ||
+      !attached.includes(network) ||
+      (recorded !== undefined && recorded !== fingerprint)
+    ) {
       runtime.removeContainer(runner, entry.container);
       state = 'absent';
     }
   }
-  if (state === 'absent') {
+  function create(): void {
     runtime.createContainer(runner, entry, {
       image: options.image,
       mounts: entry.mounts.length > 0 ? entry.mounts : [entry.root],
@@ -133,6 +143,9 @@ export function ensureReady(
       generation,
       fingerprint,
     });
+  }
+  if (state === 'absent') {
+    create();
     for (let i = 0; i < attempts; i += 1) {
       const observed = runtime.readReadyJson(runner, entry.container);
       if (checkReadiness({ generation, fingerprint }, observed, true)) {
@@ -155,6 +168,7 @@ export function ensureReady(
   const wasStopped = state === 'stopped';
   const startEpoch = Math.floor(Date.now() / 1000);
   runtime.startContainer(runner, entry.container);
+  let recreated = false;
   for (let i = 0; i < attempts; i += 1) {
     const observed = runtime.readReadyJson(runner, entry.container);
     if (!observed) {
@@ -167,6 +181,16 @@ export function ensureReady(
       continue;
     }
     if (observed.fingerprint !== fingerprint) {
+      // A stopped container cannot be exec'd, so drift that happened while
+      // it was down is only visible now that it runs again: recreate once
+      // instead of waiting out the probes on a file that can never match.
+      if (!recreated) {
+        recreated = true;
+        runtime.removeContainer(runner, entry.container);
+        create();
+        i = -1;
+        continue;
+      }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, interval);
       continue;
     }

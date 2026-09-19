@@ -87,6 +87,25 @@ describe('workspaceId', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('refuses a fork name that would walk out of instances/', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sandbox-reg-'));
+    try {
+      const path = join(dir, 'registry.json');
+      const base = { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], image: null };
+      // A fork name is interpolated into `/v/instances/<fork>` and then handed to
+      // `rm -rf`. Passing it as argv stops it being code; it does not stop it
+      // traversing. Every one of these used to load clean.
+      for (const fork of ['../../../../home/agent/.ssh', 'a/b', '..', '.', 'a:b', 'a b']) {
+        writeFileSync(path, JSON.stringify({ version: 1, workspaces: { a: { ...base, forks: [fork] } } }), 'utf8');
+        expect(() => loadRegistry(path), fork).toThrow(/forks entry is unsafe/);
+      }
+      writeFileSync(path, JSON.stringify({ version: 1, workspaces: { a: { ...base, forks: ['shared-1', 'a.b-c_d'] } } }), 'utf8');
+      expect(loadRegistry(path).workspaces['a']?.forks).toEqual(['shared-1', 'a.b-c_d']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('registry persistence', () => {

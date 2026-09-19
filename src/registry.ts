@@ -23,6 +23,26 @@ export const HOME_MODES: readonly HomeMode[] = ['shared', 'fork', 'fresh'];
 
 export type NetworkPolicy = 'open' | 'restricted';
 
+/**
+ * A long operation that has begun and has not finished. Only `restore` records
+ * one, and only because a crashed restore is the one interruption that leaves
+ * nothing else on disk to report it: `acquireLock` reclaims the workspace lock
+ * by pid liveness, so a run that dies mid-copy releases the lock that would
+ * have serialised the next command against a half-copied home.
+ *
+ * The record exists to say *a re-run is required*, not to describe a final
+ * state. Nothing clears it but a completed re-run.
+ */
+export interface PendingOperation {
+  kind: 'restore';
+  /** The backup directory the mandatory re-run must read. */
+  source: string;
+  /** ISO timestamp of the claim, for the report. Never used for expiry. */
+  startedAt: string;
+  /** The claiming pid. Liveness separates "in progress" from "interrupted". */
+  pid: number;
+}
+
 export interface WorkspaceEntry {
   id: string;
   root: string;
@@ -40,6 +60,12 @@ export interface WorkspaceEntry {
   mounts: string[];
   /** Fork names with state under instances/. Pruned only explicitly. */
   forks: string[];
+  /**
+   * Absent means no operation is outstanding. Deliberately never backfilled:
+   * unlike the fields below, absence here carries meaning, so a default would
+   * invent a claim rather than repair one.
+   */
+  pendingOperation?: PendingOperation;
 }
 
 export interface Registry {
@@ -105,7 +131,8 @@ export function loadRegistry(registryPath: string): Registry {
   const workspaces = record.workspaces as Registry['workspaces'];
   for (const [key, entry] of Object.entries(workspaces)) {
     validateWorkspaceEntry(registryPath, key, entry);
-    // Backfill registries written before the network policy existed.
+    // Backfill registries written before the network policy existed. `pendingOperation`
+    // is deliberately absent from this list: for it, absence is the meaning.
     if (entry.network !== 'open' && entry.network !== 'restricted') entry.network = 'open';
     if (entry.previousImage === undefined) entry.previousImage = null;
     if (!Array.isArray(entry.forks)) entry.forks = [];
@@ -145,14 +172,40 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
       throw bad('instance homeMode must be shared, fork, or fresh');
     }
   }
-  if (entry.forks !== undefined && (!Array.isArray(entry.forks) || !entry.forks.every((fork) => typeof fork === 'string'))) {
-    throw bad('forks must be an array of strings');
+  if (entry.forks !== undefined) {
+    if (!Array.isArray(entry.forks)) throw bad('forks must be an array of strings');
+    for (const fork of entry.forks) {
+      // A fork name is interpolated into the container path `/v/instances/<fork>`
+      // which is then handed to `rm -rf`. Passing it as argv stops it being
+      // *code*, but a name containing `/` or `..` would still walk out of
+      // instances/ and delete other state on the home volume. Enforced here, at
+      // the load boundary, so no source -- a hand-edited registry, a restored
+      // backup, or a future writer -- can seed one.
+      if (typeof fork !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fork)) {
+        throw bad(`forks entry is unsafe: ${String(fork)}`);
+      }
+    }
   }
   if (!Array.isArray(entry.mounts) || !entry.mounts.every((mount) => typeof mount === 'string')) {
     throw bad('mounts must be an array of strings');
   }
   if (entry.network !== undefined && entry.network !== 'open' && entry.network !== 'restricted') {
     throw bad('network must be open or restricted');
+  }
+  if (entry.pendingOperation !== undefined) {
+    // A claim is the only thing that freezes a workspace, so a malformed one must
+    // fail the load rather than be silently dropped: dropping it would unblock a
+    // workspace whose home is still indeterminate, which is the defect this
+    // record exists to prevent. Validated here, at the load boundary, so no
+    // source -- a hand-edited registry or a future writer -- can seed one.
+    const claim = entry.pendingOperation as unknown as Record<string, unknown> | null;
+    if (typeof claim !== 'object' || claim === null) throw bad('pendingOperation must be an object');
+    if (claim['kind'] !== 'restore') throw bad('pendingOperation kind must be restore');
+    if (!nonEmptyString(claim['source'])) throw bad('pendingOperation source must be a non-empty string');
+    if (!nonEmptyString(claim['startedAt'])) throw bad('pendingOperation startedAt must be a non-empty string');
+    if (typeof claim['pid'] !== 'number' || !Number.isInteger(claim['pid']) || claim['pid'] <= 0) {
+      throw bad('pendingOperation pid must be a positive integer');
+    }
   }
 }
 

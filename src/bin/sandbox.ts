@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
 import { agentEngine, agentEngines, loadUserCatalog, outdatedEngines, type AgentEngine, type VersionRunner } from '../engines/agent.js';
-import { backupWorkspace, restoreWorkspace } from '../backup.js';
+import { backupWorkspace, copyRestoreHome, planRestore } from '../backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../config.js';
 import {
   assertInstanceName,
@@ -35,12 +35,13 @@ import {
   lookupWorkspace,
   networkName,
   registerWorkspace,
-  saveRegistry,
   type Registry,
   type WorkspaceEntry,
 } from '../registry.js';
+import { withRegistryTxn } from '../registry-txn.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
-import { migrateHomeDir, sandboxDir } from '../paths.js';
+import { restoreClaimOf, restoreClaimState, restorePendingRefusal, restoreRerunCommand } from '../restore-claim.js';
+import { homeMovePending, migrateHomeDir, sandboxDir } from '../paths.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, linkHelp, credentialsHelp, describeAction, imageHelp, unlinkHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
 
@@ -321,6 +322,14 @@ function loadRegistryOrThrow(deps: MainDeps): Registry {
   }
 }
 
+/**
+ * The only sanctioned way to write the registry -- see `registry-txn.ts` for the
+ * invariant and for why the lock identity is a constant rather than a workspace id.
+ * Everything a caller reads before this call is resolution input only.
+ */
+const withRegistry = <T>(deps: MainDeps, fn: (registry: Registry) => T): T =>
+  withRegistryTxn(deps.lockDir, registryPathOf(deps), loadRegistryOrThrow.bind(null, deps), fn);
+
 /** Filesystem pre-check so the git probe below never runs (and never
  * leaks its fatal to stderr) outside a repository. */
 export function hasGitDir(cwd: string): boolean {
@@ -341,15 +350,38 @@ function detectGitRoot(deps: MainDeps): string | null {
   return root ?? null;
 }
 
+interface ResolveOptions {
+  /**
+   * `restore` is the operation that clears a claim, and `status` reports one
+   * without mutating anything. They are the only two commands that may proceed
+   * while a claim is outstanding -- see `restore-claim.ts`.
+   */
+  allowPendingRestore?: boolean;
+}
+
+/**
+ * The `restore` freeze, in one place. Every command that resolves a workspace
+ * goes through `resolveAndEnsure`, so the rule is enforced at a choke point
+ * rather than by discipline at two dozen call sites -- which is the difference
+ * between a rule and a habit.
+ */
+function refuseIfRestorePending(entry: WorkspaceEntry, options: ResolveOptions = {}): WorkspaceEntry {
+  if (options.allowPendingRestore) return entry;
+  const claim = restoreClaimOf(entry);
+  if (claim) throw new CliError(restorePendingRefusal(entry, claim), 1);
+  return entry;
+}
+
 async function resolveAndEnsure(
   deps: MainDeps,
   registry: Registry,
   explicitRoot: string | undefined,
+  options: ResolveOptions = {},
 ): Promise<WorkspaceEntry> {
   const gitRoot = explicitRoot === undefined ? detectGitRoot(deps) : null;
   const resolution = resolveWorkspace({ explicitRoot, cwd: deps.cwd, registry, gitRoot });
   const existing = lookupWorkspace(registry, resolution.root);
-  if (existing) return existing;
+  if (existing) return refuseIfRestorePending(existing, options);
   deps.stdout(`workspace is not registered:\n  root: ${resolution.root}\n`);
   deps.stdout(`plan: register root, create container and host tmux session on first start.\n`);
   const approved = await deps.confirm('approve this workspace scope?');
@@ -359,9 +391,16 @@ async function resolveAndEnsure(
     const problem = rejectForbiddenMount(mount, deps.homeDir);
     if (problem) throw new CliError(`refused mount ${mount}: ${problem}`, 2);
   }
-  const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir, runtime: loadHostConfig(deps.homeDir).runtime, terminal: loadHostConfig(deps.homeDir).terminal });
-  saveRegistry(registryPathOf(deps), registry);
-  return entry;
+  const hostConfig = loadHostConfig(deps.homeDir);
+  // Registered inside the transaction, and re-checked there: the read above may predate a
+  // concurrent registration of the same root, and the entry returned is the live one.
+  const ensured = withRegistry(deps, (live) =>
+    lookupWorkspace(live, canonical) ??
+    registerWorkspace(live, canonical, [canonical], { homeDir: deps.homeDir, runtime: hostConfig.runtime, terminal: hostConfig.terminal }),
+  );
+  // Guarded after the transaction closes. A fresh registration cannot carry a claim, but the
+  // re-found entry above is another run's, and that one can.
+  return refuseIfRestorePending(ensured, options);
 }
 
 function requireImage(entry: WorkspaceEntry): string {
@@ -399,10 +438,16 @@ export async function main(argv: string[], deps: MainDeps): Promise<number> {
 }
 
 async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
-  if (migrateHomeDir(deps.homeDir)) {
-    deps.stderr('sandbox home moved from ~/.sandbox to ~/.agent.sandbox\n');
-  }
   const parsed = parseArgs(argv);
+  // The home move is a renameSync, so it belongs to commands that may
+  // mutate. help and version touch nothing, and doctor is read-only by
+  // contract 4: it reports a pending move through its own check instead
+  // of performing one as a side effect of being asked a question.
+  if (parsed.kind !== 'help' && parsed.kind !== 'version' && parsed.kind !== 'doctor') {
+    if (migrateHomeDir(deps.homeDir)) {
+      deps.stderr('sandbox home moved from ~/.sandbox to ~/.agent.sandbox\n');
+    }
+  }
   const agents = agentRegistry(deps);
   switch (parsed.kind) {
     case 'help':
@@ -415,17 +460,17 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const registry = loadRegistryOrThrow(deps);
       const resolution = resolveWorkspace({ explicitRoot: parsed.workspace, cwd: deps.cwd, registry });
       const current = resolution.registered ? lookupWorkspace(registry, resolution.root) : null;
-      const network = current ? networkName(current.id) : '';
-      const networkListed = current
-        ? deps.runner.run('docker', ['network', 'ls', '--filter', `name=^${network}$`, '--format', '{{.Name}}'])
-        : null;
-      const networkExists =
-        networkListed !== null &&
-        networkListed.status === 0 &&
-        networkListed.stdout.split('\n').map((line) => line.trim()).includes(network);
-      const deadWindows = current ? deadRosterWindows(deps, current) : [];
       const doctorRt = current ? selectRuntime(deps, current) : selectRuntime(deps);
       const doctorTerm = current ? selectTerminal(deps, current) : selectTerminal(deps);
+      // Probed through the workspace's own engine. The literal docker call
+      // that used to sit here reported on a runtime the workspace may not
+      // use at all, and never reached the apple engine's own probe.
+      const network = current ? networkName(current.id) : '';
+      const networkExists = current ? doctorRt.networkExists(deps.runner, network) : false;
+      const networkInternal = current ? probeNetworkInternal(doctorRt, deps.runner, network) : null;
+      const deadWindows = current ? deadRosterWindows(deps, current) : [];
+      // Doctor never refuses on a claim and never clears one: it reports it, like `status`.
+      const claim = current ? restoreClaimOf(current) : null;
       let runningVersions: Record<string, string> | null = null;
       if (current && doctorRt.containerState(deps.runner, current.container, current.id) === 'running') {
         runningVersions = inspectRunningVersions(deps, doctorRt, current.container, current.root);
@@ -448,7 +493,16 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
             installHint: doctorTerm.installHint(deps.platform),
           },
         },
-        { image: current?.image ?? null, network: current ? current.network : null, networkExists, deadWindows, runningVersions },
+        {
+          image: current?.image ?? null,
+          network: current ? current.network : null,
+          networkExists,
+          networkInternal,
+          deadWindows,
+          runningVersions,
+          pendingHomeMove: homeMovePending(deps.homeDir),
+          pendingRestore: claim ? { state: restoreClaimState(claim), source: claim.source } : null,
+        },
       );
       deps.stdout(parsed.json ? renderDoctorJson(checks) : renderDoctorText(checks));
       return doctorExitCode(checks);
@@ -470,12 +524,18 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
-        if (!entry.instances.some((item) => item.name === name)) {
-          entry.instances.push({ name, kind: 'shell', window: name, homeMode: parsed.kind === 'shell' ? parsed.homeMode : undefined });
-          if (parsed.kind === 'shell' && parsed.homeMode === 'fork' && !entry.forks.includes(name)) entry.forks.push(name);
-          saveRegistry(registryPathOf(deps), registry);
-        }
-        const shellMode = entry.instances.find((item) => item.name === name)?.homeMode ?? (parsed.kind === 'shell' ? parsed.homeMode : undefined);
+        const homeMode = parsed.kind === 'shell' ? parsed.homeMode : undefined;
+        // The write is the transaction, and the mode is read back from the same
+        // transaction: nothing here depends on the pre-lock snapshot.
+        const shellMode = withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          if (!target.instances.some((item) => item.name === name)) {
+            target.instances.push({ name, kind: 'shell', window: name, homeMode });
+            if (homeMode === 'fork' && !target.forks.includes(name)) target.forks.push(name);
+          }
+          return target.instances.find((item) => item.name === name)?.homeMode ?? homeMode;
+        });
         const launchEnv = launchEnvFor(deps, entry, name, shellMode);
         ensureInstanceHome(deps.runner, rt, entry.container, name, shellMode);
         term.openAgentWindow(deps.runner, entry.session, name, rt.execVector(entry.container, { workdir: entry.root, argv: ['bash'], env: launchEnv }), entry.root);
@@ -508,12 +568,21 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       let launched: string;
       try {
         ensureReady(deps.runner, rt, entry, { image: requireImage(entry) });
-        if (!same) {
-          entry.instances.push({ name, kind: parsed.agent, window: name, homeMode: parsed.homeMode });
-          if (parsed.homeMode === 'fork' && !entry.forks.includes(name)) entry.forks.push(name);
-          saveRegistry(registryPathOf(deps), registry);
-        }
-        const mode = same?.homeMode ?? parsed.homeMode;
+        // Re-checked inside the transaction: the pre-lock `same` may be stale, and the
+        // mode must come from the entry that was actually written.
+        const mode = withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          const existing = target.instances.find((item) => item.name === name);
+          if (existing && existing.kind !== parsed.agent) {
+            throw new CliError(`instance name is occupied by another agent: ${name} runs ${existing.kind}`, 1);
+          }
+          if (!existing) {
+            target.instances.push({ name, kind: parsed.agent, window: name, homeMode: parsed.homeMode });
+            if (parsed.homeMode === 'fork' && !target.forks.includes(name)) target.forks.push(name);
+          }
+          return existing?.homeMode ?? parsed.homeMode;
+        });
         const launchEnv = launchEnvFor(deps, entry, name, mode);
         ensureInstanceHome(deps.runner, rt, entry.container, name, mode);
         launched = term.openAgentWindow(
@@ -538,14 +607,19 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
         deps.stdout(linkHelp());
         return 0;
       }
-      const registry = loadRegistryOrThrow(deps);
       const raw = parsed.root ?? deps.cwd;
       if (!existsSync(raw)) {
         throw new CliError(`workspace root does not exist: ${raw}`, 2);
       }
       const canonical = defaultCanonicalize(raw);
-      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir, runtime: loadHostConfig(deps.homeDir).runtime, terminal: loadHostConfig(deps.homeDir).terminal });
-      saveRegistry(registryPathOf(deps), registry);
+      const hostConfig = loadHostConfig(deps.homeDir);
+      // Guarded inside the transaction: a `link` on an already-registered workspace is a
+      // no-op mutation, and refusing it here means a refusal never leaves a write behind.
+      const entry = withRegistry(deps, (live) => {
+        const found = lookupWorkspace(live, canonical);
+        if (found) return refuseIfRestorePending(found);
+        return registerWorkspace(live, canonical, [canonical], { homeDir: deps.homeDir, runtime: hostConfig.runtime, terminal: hostConfig.terminal });
+      });
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
     }
@@ -623,13 +697,19 @@ export function reattachOrHint(deps: MainDeps, term: TerminalEngine, session: st
   }
 }
 /** Remove orphan fork state: forks with no roster entry left.
- * Fork names share the instance charset (letters, digits, dot,
- * underscore, hyphen), so interpolation below cannot break out.
+ * Fork names are validated at the restore boundary (src/backup.ts), and the
+ * path below is passed to the one-shot as an argv element rather than
+ * interpolated into the shell script, so neither a crafted registry nor a
+ * tampered backup can turn a name into executable code.
+ * Victims are chosen before confirmation but re-checked under the lock:
+ * another invocation can reopen a name while the prompt is on screen.
  * Credential files are never touched: clear them explicitly.
  */
-async function pruneForks(deps: MainDeps, registry: Registry, targets: WorkspaceEntry[]): Promise<number> {
+async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<number> {
   const victims: { entry: WorkspaceEntry; rt: RuntimeEngine; fork: string }[] = [];
   for (const entry of targets) {
+    // Refused before the prompt, so a frozen workspace is never asked about.
+    refuseIfRestorePending(entry);
     const live = new Set(entry.instances.map((item) => item.name));
     const rt = selectRuntime(deps, entry);
     for (const fork of entry.forks) {
@@ -643,26 +723,59 @@ async function pruneForks(deps: MainDeps, registry: Registry, targets: Workspace
   const names = victims.map((item) => `${item.entry.id}:${item.fork}`).join(', ');
   const approved = await deps.confirm(`remove ${victims.length} orphan fork(s): ${names}? Credential files are kept.`);
   if (!approved) throw new CliError('prune cancelled; nothing was changed', 1);
+  const skipped: string[] = [];
+  const pruned: string[] = [];
   for (const item of victims) {
     const handle = acquireLock(deps.lockDir, item.entry.id);
     try {
+      // Read for the guard and for the one-shot's inputs. The authoritative re-check is
+      // the transaction below; this read only decides whether to attempt the delete.
+      const pre = loadRegistryOrThrow(deps).workspaces[item.entry.id];
+      if (!pre) throw new CliError(`workspace is not registered: ${item.entry.root}`, 1);
+      // Authoritative re-check under the lock, before the one-shot below.
+      refuseIfRestorePending(pre);
+      if (!pre.forks.includes(item.fork)) continue;
+      if (pre.instances.some((instance) => instance.name === item.fork)) {
+        skipped.push(item.fork);
+        continue;
+      }
       // The home volume rides along at /v: without it the one-shot would
       // prune an ephemeral container filesystem and report success.
+      //
+      // The delete comes BEFORE the claim: `rm -rf` is idempotent (it exits 0 on an
+      // absent path), so a crash between the two is repaired by re-running -- a no-op
+      // one-shot, then the claim.
       const probed = item.rt.runOneShot(
         deps.runner,
-        requireImage(item.entry),
+        requireImage(pre),
         { SANDBOX_GENERATION: 'prune', SANDBOX_CONFIG_FINGERPRINT: 'prune' },
-        ['sh', '-c', `rm -rf '/v/instances/${item.fork}'`],
-        { mounts: [{ source: item.entry.homeVolume, target: '/v' }] },
+        ['sh', '-c', 'rm -rf -- "$1"', 'sh', `/v/instances/${item.fork}`],
+        { mounts: [{ source: pre.homeVolume, target: '/v' }] },
       );
       if (probed.status !== 0) throw new CliError(`cannot prune fork ${item.fork}`, 1);
-      item.entry.forks = item.entry.forks.filter((fork) => fork !== item.fork);
-      saveRegistry(registryPathOf(deps), registry);
+      withRegistry(deps, (live) => {
+        const target = live.workspaces[item.entry.id];
+        if (!target) return;
+        if (target.instances.some((instance) => instance.name === item.fork)) return;
+        target.forks = target.forks.filter((fork) => fork !== item.fork);
+        pruned.push(`${item.entry.id}:${item.fork}`);
+      });
     } finally {
       handle.release();
     }
   }
-  deps.stdout(`pruned forks: ${names}; credential files kept\n`);
+  if (skipped.length > 0) {
+    deps.stderr(`skipped fork(s) that became live while confirming: ${skipped.join(', ')}\n`);
+  }
+  if (pruned.length === 0) {
+    deps.stdout(
+      skipped.length > 0
+        ? 'no forks pruned; every victim became live while confirming\n'
+        : 'no forks pruned; nothing remained eligible\n',
+    );
+    return 0;
+  }
+  deps.stdout(`pruned forks: ${pruned.join(', ')}; credential files kept\n`);
   return 0;
 }
 
@@ -675,6 +788,8 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   if (!entry) {
     throw new CliError(`workspace is not registered: ${root}`, 1);
   }
+  // Refused before the prompt, so a frozen workspace is never asked about.
+  refuseIfRestorePending(entry);
   const rt = selectRuntime(deps, entry);
   const term = selectTerminal(deps, entry);
   let state = rt.containerState(deps.runner, entry.container, entry.id);
@@ -688,14 +803,19 @@ async function unregisterWorkspace(deps: MainDeps, registry: Registry, root: str
   }
   const handle = acquireLock(deps.lockDir, entry.id);
   try {
+    // Authoritative re-check under the lock: the phase-1 read may predate a claim written
+    // by a restore that then died. It precedes every resource change below.
+    const locked = loadRegistryOrThrow(deps).workspaces[entry.id];
+    if (locked) refuseIfRestorePending(locked);
     if (state === 'running') {
       stopWorkspace(deps.runner, rt, entry);
       state = 'stopped';
     }
     if (state === 'stopped') rt.removeContainer(deps.runner, entry.container);
     if (term.sessionAlive(deps.runner, entry.session)) term.killSession(deps.runner, entry.session);
-    delete registry.workspaces[entry.id];
-    saveRegistry(registryPathOf(deps), registry);
+    withRegistry(deps, (live) => {
+      delete live.workspaces[entry.id];
+    });
     deps.stdout(`unregistered ${entry.id}; volumes, networks, images, and credentials kept\n`);
     return 0;
   } finally {
@@ -710,6 +830,20 @@ function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
     if (!term.paneAlive(deps.runner, entry.session, instance.window)) dead.push(instance.window);
   }
   return dead;
+}
+
+/**
+ * The live internal flag of the workspace network, or null when the engine
+ * cannot answer. Doctor is a diagnostic: the apple engine fails closed by
+ * throwing on an undeterminable mode, which is right for a start path and
+ * wrong for a probe, so a throw reads as "cannot determine" here.
+ */
+function probeNetworkInternal(rt: RuntimeEngine, runner: CommandRunner, network: string): boolean | null {
+  try {
+    return rt.networkInternal(runner, network);
+  } catch {
+    return null;
+  }
 }
 
 /** Read the workspace id from a backup manifest without touching the registry. */function peekBackupId(outputDir: string): string {
@@ -744,7 +878,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       return 0;
     }
     case 'status': {
-      const entry = await resolveAndEnsure(deps, registry, workspace);
+      // Reports a claim rather than refusing on one: it takes no workspace lock and
+      // mutates nothing, so it is one of the two commands a claim does not freeze.
+      const entry = await resolveAndEnsure(deps, registry, workspace, { allowPendingRestore: true });
       const rt = selectRuntime(deps, entry);
       const term = selectTerminal(deps, entry);
       const state = rt.containerState(deps.runner, entry.container, entry.id);
@@ -757,11 +893,14 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         if (!alive) return `${name}(${kind}:${home}, session absent)`;
         return windows.includes(name) ? `${name}(${kind}:${home})` : `${name}(${kind}:${home}, window missing)`;
       };
+      const claim = restoreClaimOf(entry);
       if ((rest.includes('--json') || rest.includes('-j'))) {
-        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, instances: entry.instances.map((i) => ({ name: i.name, kind: i.kind, window: windows.includes(i.window), home: i.homeMode ?? 'shared' })) }, null, 2)}\n`);
+        deps.stdout(`${JSON.stringify({ id: entry.id, container: state, session: alive, restore: claim ? { state: restoreClaimState(claim), source: claim.source, startedAt: claim.startedAt } : null, instances: entry.instances.map((i) => ({ name: i.name, kind: i.kind, window: windows.includes(i.window), home: i.homeMode ?? 'shared' })) }, null, 2)}\n`);
         return 0;
       }
-      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n  instances: ${entry.instances.map((i) => describe(i.name, i.kind, i.homeMode)).join(', ') || '(none)'}\n`);
+      // Printed only when there is something to say, so the ordinary output is unchanged.
+      const claimLine = claim ? `  restore: ${restoreClaimState(claim)} -- ${restoreRerunCommand(claim)}\n` : '';
+      deps.stdout(`workspace ${entry.id}\n  container: ${state}\n  session: ${alive ? 'alive' : 'absent'}\n${claimLine}  instances: ${entry.instances.map((i) => describe(i.name, i.kind, i.homeMode)).join(', ') || '(none)'}\n`);
       return 0;
     }
     case 'link': {
@@ -771,8 +910,15 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         throw new CliError(`workspace root does not exist: ${root}`, 2);
       }
       const canonical = defaultCanonicalize(root);
-      const entry = registerWorkspace(registry, canonical, [canonical], { homeDir: deps.homeDir, runtime: loadHostConfig(deps.homeDir).runtime, terminal: loadHostConfig(deps.homeDir).terminal });
-      saveRegistry(registryPathOf(deps), registry);
+      const hostConfig = loadHostConfig(deps.homeDir);
+      // The second of the two `link` arms, guarded identically. They are separate arms
+      // because one resolves from `--root` and the other from the parsed top level, and
+      // that duplication is exactly where a single-site rule goes missing.
+      const entry = withRegistry(deps, (live) => {
+        const found = lookupWorkspace(live, canonical);
+        if (found) return refuseIfRestorePending(found);
+        return registerWorkspace(live, canonical, [canonical], { homeDir: deps.homeDir, runtime: hostConfig.runtime, terminal: hostConfig.terminal });
+      });
       deps.stdout(`registered ${entry.id} for ${canonical}\n`);
       return 0;
     }
@@ -850,8 +996,14 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         for (const item of drifted) overrides[item.key] = item.latest;
         const tag = `sandbox-workspace:upgrade-${Date.now()}`;
         const built = buildUpgradeCandidate(deps, rt, agents.values(), overrides, tag);
-        activateImage(entry, built.tag);
-        saveRegistry(registryPathOf(deps), registry);
+        // The image pointer IS the intent: recorded in a short transaction before the
+        // slow work, so a crash leaves registry = new image / container = old image and
+        // the next start recreates it (the recreation condition on the image id).
+        withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          activateImage(target, built.tag);
+        });
         stopWorkspace(deps.runner, rt, entry);
         ensureReady(deps.runner, rt, entry, { image: built.tag });
         deps.stdout(`workspace ${entry.id} upgraded to ${built.tag} (container ${entry.container})\n`);
@@ -875,19 +1027,24 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        const locked = loadRegistryOrThrow(deps);
-        const liveEntry = locked.workspaces[entry.id];
-        if (!liveEntry) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
-        const index = liveEntry.instances.findIndex((item) => item.name === name);
-        const instance = liveEntry.instances[index];
-        if (index < 0 || !instance) throw new CliError(`unknown instance: ${name}`, 1);
-        const existsNow = term.windowExists(deps.runner, liveEntry.session, instance.window);
+        // Read for the race guard and for the window target; the authoritative instance
+        // lookup is the transaction below.
+        const pre = loadRegistryOrThrow(deps).workspaces[entry.id];
+        if (!pre) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+        const instance = pre.instances.find((item) => item.name === name);
+        if (!instance) throw new CliError(`unknown instance: ${name}`, 1);
+        const existsNow = term.windowExists(deps.runner, pre.session, instance.window);
         if (!existed && existsNow) {
           throw new CliError(`instance ${name} became live; re-run: sandbox workspace close ${name}`, 1);
         }
-        term.closeWindow(deps.runner, liveEntry.session, instance.window);
-        liveEntry.instances.splice(index, 1);
-        saveRegistry(registryPathOf(deps), locked);
+        // Closed before the claim: closing an already-absent window is the
+        // already-closed case, so a crash between the two is repaired by re-running.
+        term.closeWindow(deps.runner, pre.session, instance.window);
+        withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) return;
+          target.instances = target.instances.filter((item) => item.name !== name);
+        });
         deps.stdout(`closed instance ${name}; fork state kept, prune with: sandbox workspace prune --forks\n`);
         return 0;
       } finally {
@@ -1004,21 +1161,53 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         deps.stdout(`plan: switch network ${entry.network} -> ${network} (recreates the container on next start)\n`);
       }
       if (runtime !== undefined && runtime !== entry.runtime) {
-        deps.stdout(`plan: switch runtime ${entry.runtime} -> ${runtime} (recreates the container on next start)\n`);
+        deps.stdout(`plan: switch runtime ${entry.runtime} -> ${runtime} (stops and removes the old container and kills the session; both are recreated on next start)\n`);
       }
       if (terminal !== undefined && terminal !== entry.terminal) {
-        deps.stdout(`plan: switch terminal ${entry.terminal} -> ${terminal} (recreates windows on next start)\n`);
+        deps.stdout(`plan: switch terminal ${entry.terminal} -> ${terminal} (kills the old session; windows are recreated on next start)\n`);
       }
       const approved = await deps.confirm('apply these changes?');
       if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
-      if (addMount && !entry.mounts.includes(defaultCanonicalize(addMount))) entry.mounts.push(defaultCanonicalize(addMount));
-      if (network !== undefined) entry.network = network;
-      if (runtime !== undefined) entry.runtime = runtime;
-      if (terminal !== undefined) entry.terminal = terminal;
-      if (dropMount) {
-        dropMountFromEntry(entry, dropMount);
+      // A switch migrates nothing, so the previous engine's resources are
+      // retired here. The container is owned by the old runtime -- the new
+      // one would refuse it as foreign, leaving it unreachable by the CLI --
+      // and a window's launch command embeds the old runtime's binary, so a
+      // runtime switch invalidates the windows even when the terminal engine
+      // does not change. Retiring before the save keeps a failed retirement
+      // from recording a switch that never happened.
+      //
+      // The retirement runs under the workspace lock: without it a
+      // concurrent start or launch holding the same lock could have its
+      // container yanked mid-flight by this command.
+      const handle = acquireLock(deps.lockDir, entry.id);
+      try {
+        const previousRt = selectRuntime(deps, entry);
+        const previousTerm = selectTerminal(deps, entry);
+        const runtimeChanges = runtime !== undefined && runtime !== entry.runtime;
+        const terminalChanges = terminal !== undefined && terminal !== entry.terminal;
+        if (runtimeChanges || terminalChanges) {
+          if (runtimeChanges) {
+            const state = previousRt.containerState(deps.runner, entry.container, entry.id);
+            if (state === 'running') previousRt.stopContainer(deps.runner, entry.container);
+            if (state === 'running' || state === 'stopped') previousRt.removeContainer(deps.runner, entry.container);
+          }
+          if (previousTerm.sessionAlive(deps.runner, entry.session)) previousTerm.killSession(deps.runner, entry.session);
+        }
+        withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          if (addMount) {
+            const canonical = defaultCanonicalize(addMount);
+            if (!target.mounts.includes(canonical)) target.mounts.push(canonical);
+          }
+          if (network !== undefined) target.network = network;
+          if (runtime !== undefined) target.runtime = runtime;
+          if (terminal !== undefined) target.terminal = terminal;
+          if (dropMount) dropMountFromEntry(target, dropMount);
+        });
+      } finally {
+        handle.release();
       }
-      saveRegistry(registryPathOf(deps), registry);
       return 0;
     }
     case 'mount': {
@@ -1032,8 +1221,11 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       }
       const approved = await deps.confirm(`add mount ${canonical} to ${entry.id}? Applies on next start.`);
       if (!approved) throw new CliError('mount cancelled; nothing was changed', 1);
-      entry.mounts.push(canonical);
-      saveRegistry(registryPathOf(deps), registry);
+      withRegistry(deps, (live) => {
+        const target = live.workspaces[entry.id];
+        if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+        if (!target.mounts.includes(canonical)) target.mounts.push(canonical);
+      });
       deps.stdout(`mount ${canonical} added to ${entry.id}; applies on next start\n`);
       return 0;
     }
@@ -1041,10 +1233,16 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       const path = rest[0];
       if (!path) throw new UsageError('workspace unmount requires <path>');
       const entry = await resolveAndEnsure(deps, registry, workspace);
+      // Validated before the prompt so an invalid drop never reaches it. This touches the
+      // discarded phase-1 snapshot; the authoritative mutation is the transaction below.
       dropMountFromEntry(entry, path);
       const approved = await deps.confirm(`drop mount ${path} from ${entry.id}? Applies on next start.`);
       if (!approved) throw new CliError('unmount cancelled; nothing was changed', 1);
-      saveRegistry(registryPathOf(deps), registry);
+      withRegistry(deps, (live) => {
+        const target = live.workspaces[entry.id];
+        if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+        dropMountFromEntry(target, path);
+      });
       deps.stdout(`mount ${path} dropped from ${entry.id}; applies on next start\n`);
       return 0;
     }
@@ -1067,9 +1265,11 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         if (!entry) throw new CliError(`no registered workspace in scope: ${resolution.root}`, 1);
         targets.push(entry);
       }
-      if (forksOnly) return pruneForks(deps, registry, targets);
+      if (forksOnly) return pruneForks(deps, targets);
       const stopped: { entry: WorkspaceEntry; rt: RuntimeEngine }[] = [];
       for (const entry of targets) {
+        // Refused before the prompt, so a frozen workspace is never asked about.
+        refuseIfRestorePending(entry);
         const rt = selectRuntime(deps, entry);
         if (rt.containerState(deps.runner, entry.container, entry.id) === 'stopped') stopped.push({ entry, rt });
       }
@@ -1083,6 +1283,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       for (const item of stopped) {
         const handle = acquireLock(deps.lockDir, item.entry.id);
         try {
+          // Authoritative re-check under the lock, before the removal below.
+          const locked = loadRegistryOrThrow(deps).workspaces[item.entry.id];
+          if (locked) refuseIfRestorePending(locked);
           item.rt.removeContainer(deps.runner, item.entry.container);
         } finally {
           handle.release();
@@ -1127,7 +1330,9 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
     case 'restore': {
       const input = takeRestOption(rest, ['--input']);
       if (!input) throw new UsageError('workspace restore requires --input <path>');
-      const entry = await resolveAndEnsure(deps, registry, workspace);
+      // Exempt from the claim it is about to write, and from one left by a crashed
+      // predecessor: this command is what clears it.
+      const entry = await resolveAndEnsure(deps, registry, workspace, { allowPendingRestore: true });
       const rt = selectRuntime(deps, entry);
       const manifestId = peekBackupId(input);
       if (manifestId !== entry.id) {
@@ -1137,7 +1342,27 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
       if (!approved) throw new CliError('restore cancelled; nothing was changed', 1);
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        const restored = restoreWorkspace(
+        // The registry half is a short transaction. The volume copy is the slow half and
+        // is deliberately outside it, so the registry lock is never held across a copy.
+        //
+        // The claim is written *before* the copy, because a crash during the copy is the
+        // only case nothing else on disk would report. A re-run overwrites it in this same
+        // transaction and clears it in the one below, which is why stop-and-re-run is safe:
+        // copying over a half-copy completes it.
+        const restored = withRegistry(deps, (live) => {
+          const target = planRestore(live, input);
+          if (target.id !== entry.id) {
+            throw new CliError(`backup identity changed during restore; nothing was saved`, 1);
+          }
+          target.pendingOperation = {
+            kind: 'restore',
+            source: input,
+            startedAt: new Date().toISOString(),
+            pid: process.pid,
+          };
+          return target;
+        });
+        copyRestoreHome(
           {
             copyFromContainer: (container, from, to) => {
               try {
@@ -1154,13 +1379,15 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
               }
             },
           },
-          registry,
+          restored,
           input,
         );
-        if (restored.id !== entry.id) {
-          throw new CliError(`backup identity changed during restore; nothing was saved`, 1);
-        }
-        saveRegistry(registryPathOf(deps), registry);
+        // The copy completed, so the home is determinate again. Cleared in a second short
+        // transaction, after the slow work -- never held across it.
+        withRegistry(deps, (live) => {
+          const target = live.workspaces[restored.id];
+          if (target) delete target.pendingOperation;
+        });
         deps.stdout(`restored ${restored.id} from ${input}; restart the workspace to cut over\n`);
         return 0;
       } finally {
@@ -1510,8 +1737,11 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        const activation = activateImage(entry, digest);
-        saveRegistry(registryPathOf(deps), registry);
+        const activation = withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          return activateImage(target, digest);
+        });
         deps.stdout(`activated ${activation.current} (previous: ${activation.previous ?? '(none)'})\n`);
         return 0;
       } finally {
@@ -1526,13 +1756,15 @@ async function imageCommand(deps: MainDeps, action: string, rest: string[], work
       }
       const handle = acquireLock(deps.lockDir, entry.id);
       try {
-        let activation;
-        try {
-          activation = rollbackImage(entry);
-        } catch (error) {
-          throw new CliError((error as Error).message, 1);
-        }
-        saveRegistry(registryPathOf(deps), registry);
+        const activation = withRegistry(deps, (live) => {
+          const target = live.workspaces[entry.id];
+          if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);
+          try {
+            return rollbackImage(target);
+          } catch (error) {
+            throw new CliError((error as Error).message, 1);
+          }
+        });
         deps.stdout(`rolled back to ${activation.current}; data migrations are not reversed\n`);
         return 0;
       } finally {

@@ -5,6 +5,7 @@ import {
   herderSessionAlive,
   herderShellCommand,
   herderTabId,
+  runInPane,
 } from '../../src/engines/herder.js';
 import type { RunResult } from '../../src/docker.js';
 
@@ -42,16 +43,6 @@ const TAB_LIST = JSON.stringify({
   },
 });
 
-const PANE_LIST = JSON.stringify({
-  id: 'cli:pane:list',
-  result: {
-    panes: [
-      { pane_id: 'w1:p1', tab_id: 'w1:t1' },
-      { pane_id: 'w1:p2', tab_id: 'w1:t2' },
-    ],
-  },
-});
-
 describe('herder engine', () => {
   it('detects sessions, tabs, and live panes from live-recorded shapes', () => {
     const { runner } = scripted({
@@ -67,6 +58,30 @@ describe('herder engine', () => {
     expect(herderTabId(tabs.runner, 'sandbox-w', 'missing')).toBeNull();
     expect(HerderTerminalEngine.name).toBe('herder');
     expect(HerderTerminalEngine.cliBinary).toBe('herdr');
+  });
+
+  it('fails closed when a mutation reports an error body with exit code 0', () => {
+    // herdr answers failures as {"error": {...}} often with status 0, so a
+    // status-only check reported a failed launch as a created instance and a
+    // failed close as a closed window.
+    const launch = { command: 'echo', args: ['hi'] };
+    const ok = scripted({ 'herdr --session sandbox-w pane run': { status: 0, stdout: '{}', stderr: '' } });
+    expect(() => runInPane(ok.runner, 'sandbox-w', 'w1:p1', launch)).not.toThrow();
+
+    const refused = JSON.stringify({ error: { code: 'pane_not_found', message: 'no such pane' } });
+    const run = scripted({ 'herdr --session sandbox-w pane run': { status: 0, stdout: refused, stderr: '' } });
+    expect(() => runInPane(run.runner, 'sandbox-w', 'w1:p1', launch)).toThrow(/pane_not_found/);
+
+    // `scripted` cannot separate `tab list` from `tab close` -- both reduce to the
+    // same 3-arg head -- so this one dispatches on the verb itself.
+    const closeRefused = JSON.stringify({ error: { code: 'tab_not_found', message: 'no such tab' } });
+    const runner = {
+      run: (command: string, args: string[]) =>
+        `${command} ${args[2]} ${args[3]}`.endsWith('tab close')
+          ? { status: 0, stdout: closeRefused, stderr: '' }
+          : { status: 0, stdout: TAB_LIST, stderr: '' },
+    };
+    expect(() => HerderTerminalEngine.closeWindow(runner, 'sandbox-w', 'w2')).toThrow(/tab_not_found/);
   });
 
   it('treats error payloads and dead servers as failed lookups', () => {
@@ -117,7 +132,7 @@ describe('herder engine', () => {
         }
         if (tail.startsWith('pane get')) {
           const id = args[args.length - 1] as string;
-          const alive = [...panes.entries()].some(([label, value], index) => value && `w1:p${index + 1}` === id);
+          const alive = [...panes.entries()].some(([, value], index) => value && `w1:p${index + 1}` === id);
           return alive
             ? { status: 0, stdout: JSON.stringify({ result: { pane: { pane_id: id } } }), stderr: '' }
             : { status: 1, stdout: '{"error":{"code":"pane_not_found"}}', stderr: '' };

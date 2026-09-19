@@ -146,10 +146,10 @@ export function herderRootPane(runner: CommandRunner, session: string, tabId: st
  * run never kills first: callers must close a dead tab before recreating
  * it, never submit into a possibly-live pane. */
 export function runInPane(runner: CommandRunner, session: string, pane: string, command: ExecSpec): void {
-  const launched = runner.run('herdr', ['--session', session, 'pane', 'run', pane, herderShellCommand(command)]);
-  if (launched.status !== 0) {
-    throw new Error(`herdr pane run failed: ${launched.stderr.trim() || launched.stdout.trim()}`);
-  }
+  // herdr reports failures as a JSON {"error": {...}} body, often with exit code
+  // 0, so the payload must be inspected: a status check alone reports a failed
+  // launch as a created instance.
+  herdrCall(runner, session, ['pane', 'run', pane, herderShellCommand(command)]);
 }
 export function herderShellCommand(command: ExecSpec): string {
   // POSIX single-quote escaping shared with the tmux display renderer:
@@ -234,10 +234,9 @@ export const HerderTerminalEngine: TerminalEngine = {
       throw new Error(`herdr tab not found: ${window}`);
     }
     const workdir = herderTabCwd(runner, session, tabId);
-    const closed = runner.run('herdr', ['--session', session, 'tab', 'close', tabId]);
-    if (closed.status !== 0) {
-      throw new Error(`herdr tab close failed: ${closed.stderr.trim() || closed.stdout.trim()}`);
-    }
+    // Same JSON-error-body rule as pane run: a failed close would otherwise
+    // leave the tab alive while the caller reports it closed or respawned.
+    herdrCall(runner, session, ['tab', 'close', tabId]);
     HerderTerminalEngine.newWindow(runner, session, window, workdir, launch);
   },
 
@@ -269,10 +268,9 @@ export const HerderTerminalEngine: TerminalEngine = {
   closeWindow(runner, session, window) {
     const tabId = herderTabId(runner, session, window);
     if (!tabId) return;
-    const closed = runner.run('herdr', ['--session', session, 'tab', 'close', tabId]);
-    if (closed.status !== 0) {
-      throw new Error(`herdr tab close failed: ${closed.stderr.trim() || closed.stdout.trim()}`);
-    }
+    // Same JSON-error-body rule as pane run: a failed close would otherwise
+    // leave the tab alive while the caller reports it closed or respawned.
+    herdrCall(runner, session, ['tab', 'close', tabId]);
   },
 
   listSessions(runner) {

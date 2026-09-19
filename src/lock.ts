@@ -19,7 +19,13 @@ export interface LockHandle {
   release: () => void;
 }
 
-function pidAlive(pid: number): boolean {
+/**
+ * Whether the process that recorded a pid is still alive. Shared by the lock's
+ * reclaim path and by the `restore` claim, which asks the same question about
+ * its own holder: the lock answers "may I take this?", the claim answers "is the
+ * run that wrote this still going?".
+ */
+export function pidAlive(pid: number): boolean {
   if (pid === process.pid) return true;
   try {
     process.kill(pid, 0);

@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { agentEngine, agentEngines, outdatedEngines } from '../src/engines/agent.js';
+import { agentEngine, agentEngines, loadAgentCatalog, outdatedEngines } from '../src/engines/agent.js';
 import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
@@ -43,6 +43,20 @@ describe('agents', () => {
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
     expect(agentEngine(extended, 'codex').installSpec().pinnedVersion).toBe('0.154.0');
   });
+
+  it('refuses an unsupported agent however it reaches the registry', () => {
+    const grok = { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, pinnedVersion: '1.0.0', latestEndpoint: null };
+    // A user catalog document declaring grok/agy fails closed at load.
+    expect(() => loadAgentCatalog([grok])).toThrow(/not supported in containers/);
+    expect(() => loadAgentCatalog([{ ...grok, name: 'agy' }])).toThrow(/not supported in containers/);
+    // A supported extra agent is still accepted.
+    expect(loadAgentCatalog([{ ...grok, name: 'kiro' }])).toHaveLength(1);
+    // And the guard is unconditional: even when the lookup would succeed, it
+    // throws. This is the case a user catalog used to create.
+    const forged = new Map(engines);
+    forged.set('grok', engines.get('codex') as NonNullable<ReturnType<typeof engines.get>>);
+    expect(() => agentEngine(forged, 'grok')).toThrow(/no verified linux install channel/);
+  });
 });
 
 describe('sameImageId', () => {
@@ -71,6 +85,19 @@ describe('config', () => {
     expect(normalizeLexical('/')).toBe('/');
     expect(rejectForbiddenMount('/./')).toMatch(/root/);
     expect(rejectForbiddenMount(`${homedir()}/sub/..`)).toMatch(/HOME/);
+  });
+
+  it('rejects every ancestor of HOME and of the sandbox state directory', () => {
+    // Binding an ancestor hands over HOME without ever naming it: `/Users` and
+    // `/home` expose SSH keys, the registry and every other dotfile.
+    expect(rejectForbiddenMount('/Users', '/Users/x')).toMatch(/HOME/);
+    expect(rejectForbiddenMount('/Users/', '/Users/x')).toMatch(/HOME/);
+    expect(rejectForbiddenMount('/home', '/home/x')).toMatch(/HOME/);
+    // The registry lives under HOME, so naming it directly must fail too.
+    expect(rejectForbiddenMount('/Users/x/.agent.sandbox', '/Users/x')).toMatch(/sandbox state/);
+    // Paths containing neither are still mountable, including a child of HOME.
+    expect(rejectForbiddenMount('/opt/data', '/Users/x')).toBeNull();
+    expect(rejectForbiddenMount('/Users/x/work', '/Users/x')).toBeNull();
   });
 
   it('redacts instance lists without dropping entries', () => {
@@ -291,6 +318,11 @@ describe('locks and backups', () => {
       expect(restored.forks).toEqual(['w1']);
       expect(registry.workspaces[entry.id]).toBe(restored);
       expect(calls).toHaveLength(2);
+      // The trailing `/.` is load-bearing, not cosmetic: without it the
+      // runtime nests the source directory inside the destination and a
+      // restore reproduces `/home/agent/home/agent/...`.
+      expect(calls[0]).toBe(`from:${entry.container}:/home/agent/.:${join(out, 'home')}`);
+      expect(calls[1]).toBe(`to:${entry.container}:${join(out, 'home')}/.:/home/agent`);
       expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'))).toThrow(/missing or invalid/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -308,6 +340,16 @@ describe('locks and backups', () => {
         'utf8',
       );
       expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), out)).toThrow(/unsafe id/);
+      // A fork name later reaches fork pruning, so the restore boundary
+      // enforces the shared safe-name charset there as well.
+      const sneaky = join(dir, 'sneaky');
+      mkdirSync(sneaky, { recursive: true });
+      writeFileSync(
+        join(sneaky, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: ['/w'], forks: ['../evil'] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), sneaky)).toThrow(/unsafe forks/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

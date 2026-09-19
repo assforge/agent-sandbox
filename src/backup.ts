@@ -30,7 +30,11 @@ export function backupWorkspace(
   writeFileSync(join(outputDir, 'workspace.json'), `${JSON.stringify(redactedConfig(entry), null, 2)}\n`, 'utf8');
   const stateDir = join(outputDir, 'home');
   mkdirSync(stateDir, { recursive: true });
-  runner.copyFromContainer(entry.container, '/home/agent', stateDir);
+  // Trailing `/.` copies the *contents* of /home/agent. Without it the
+  // destination directory already exists, so the runtime copies the source
+  // directory into it and the snapshot gains a spurious `agent/` level that
+  // restore then reproduces as `/home/agent/home/agent/...`.
+  runner.copyFromContainer(entry.container, '/home/agent/.', stateDir);
   return { outputDir, workspace: entry.id, copiedState: true };
 }
 
@@ -87,12 +91,15 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
 }
 
 /**
- * Restore a backup: reinstates the registry entry (recreating it when the
- * workspace was lost) and copies the home state back into the container.
- * The caller saves the registry under the workspace lock. The selected
+ * Parse and validate a backup's `workspace.json`, then apply it to the registry:
+ * reinstates the entry, recreating it when the workspace was lost. The selected
  * image is restored as recorded; data migrations are never reversed.
+ *
+ * Registry-only apart from the manifest read, so it is safe to run inside a short
+ * registry transaction. The home volume is copied separately by `copyRestoreHome`:
+ * a volume copy is slow and must never be held under the registry lock.
  */
-export function restoreWorkspace(runner: BackupRunner, registry: Registry, outputDir: string): WorkspaceEntry {
+export function planRestore(registry: Registry, outputDir: string): WorkspaceEntry {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(join(outputDir, 'workspace.json'), 'utf8'));
@@ -107,7 +114,19 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
   const rawMounts = record['mounts'];
   const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
   const rawForks = record['forks'];
-  const forks = Array.isArray(rawForks) && rawForks.every((fork): fork is string => typeof fork === 'string') ? rawForks : [];
+  // A restored fork name is later interpolated into a shell command by fork
+  // pruning, so it is validated here with the same charset every other name
+  // gets. Accepting an arbitrary string array let a tampered backup smuggle
+  // shell metacharacters and path traversal into that command.
+  const forks = Array.isArray(rawForks)
+    ? rawForks.map((fork) => {
+        if (typeof fork !== 'string') throw new Error('backup workspace.json has a non-string forks entry');
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fork)) {
+          throw new Error(`backup workspace.json has an unsafe forks entry: ${fork}`);
+        }
+        return fork;
+      })
+    : [];
   const entry: WorkspaceEntry = {
     id,
     root: requiredRoot(record, 'root'),
@@ -124,6 +143,26 @@ export function restoreWorkspace(runner: BackupRunner, registry: Registry, outpu
     forks,
   };
   registry.workspaces[id] = entry;
-  runner.copyToContainer(entry.container, join(outputDir, 'home'), '/home/agent');
+  return entry;
+}
+
+/**
+ * Copy the snapshot's home directory back into the workspace container. This is the slow
+ * half of a restore, and it is deliberately outside the registry transaction.
+ */
+export function copyRestoreHome(runner: BackupRunner, entry: WorkspaceEntry, outputDir: string): void {
+  // Mirrors the backup side: `/.` copies the contents of the snapshot's home
+  // directory into the live one. `path.join` would normalise a `.` segment
+  // away, so the suffix is concatenated.
+  runner.copyToContainer(entry.container, `${join(outputDir, 'home')}/.`, '/home/agent');
+}
+
+/**
+ * The composed form, for callers that want both halves in one step. The CLI uses the two
+ * halves separately so the registry write is never held across the copy.
+ */
+export function restoreWorkspace(runner: BackupRunner, registry: Registry, outputDir: string): WorkspaceEntry {
+  const entry = planRestore(registry, outputDir);
+  copyRestoreHome(runner, entry, outputDir);
   return entry;
 }

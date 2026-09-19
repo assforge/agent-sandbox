@@ -32,10 +32,27 @@ export interface WorkspacePosture {
   /** Null when no workspace is in scope: the network check is skipped. */
   network: 'open' | 'restricted' | null;
   networkExists: boolean;
+  /**
+   * Live internal flag of the workspace network, or null when the engine
+   * cannot determine it. `network` above is the registry policy, which is
+   * a record of intent and not a measurement: the check below reads this.
+   */
+  networkInternal?: boolean | null;
   /** Roster windows with no live pane. Empty when unscopable. */
   deadWindows: string[];
   /** Agent versions inside the running container. Null skips the drift check. */
   runningVersions?: Record<string, string> | null;
+  /**
+   * The legacy home directory is still in place and the move has not run.
+   * Read-only detection: doctor reports it, it never performs the move.
+   */
+  pendingHomeMove?: boolean;
+  /**
+   * An unfinished `restore`, precomputed by the caller as a state string plus the
+   * backup to re-run from. Kept as text rather than as a claim so the checks stay
+   * a pure function of the posture, and the wording stays with the claim itself.
+   */
+  pendingRestore?: { state: string; source: string } | null;
 }
 
 /**
@@ -118,6 +135,16 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
     remediation: tmuxBin ? undefined : terminal.installHint,
   });
 
+  if (posture.pendingHomeMove) {
+    checks.push({
+      id: 'home-dir',
+      group: 'Host',
+      status: 'warn',
+      summary: 'Host state is still under ~/.sandbox; it moves to ~/.agent.sandbox on the next mutating command',
+      remediation: 'Run: sandbox workspace list',
+    });
+  }
+
   checks.push({
     id: 'workspace-image',
     group: 'Workspace',
@@ -125,9 +152,21 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
     summary: posture.image ? `Selected image digest ${posture.image}` : 'No image has been selected for this workspace',
     remediation: posture.image ? undefined : 'Run: sandbox image build',
   });
+  // Reported before the network block below, which returns early when no workspace is in
+  // scope: a frozen workspace must be reported even when the rest cannot be probed.
+  if (posture.pendingRestore) {
+    checks.push({
+      id: 'workspace-restore',
+      group: 'Workspace',
+      status: 'warn',
+      summary: `A restore of this workspace did not finish (${posture.pendingRestore.state}); its home is indeterminate and every other command refuses`,
+      remediation: `Run: sandbox workspace restore --input ${posture.pendingRestore.source}`,
+    });
+  }
   if (posture.network === null) {
     return checks;
-  }  if (!posture.networkExists) {
+  }
+  if (!posture.networkExists) {
     checks.push({
       id: 'workspace-network',
       group: 'Workspace',
@@ -135,12 +174,34 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
       summary: 'The workspace network does not exist; start the workspace to create it',
       remediation: 'Run: sandbox workspace start',
     });
-  } else if (posture.network === 'restricted') {
+  } else if (posture.networkInternal === undefined || posture.networkInternal === null) {
+    // The registry policy is a record of intent, not a measurement. Claiming
+    // "no external route" on the strength of it is the defect this check
+    // exists to prevent, so an unreadable probe reports itself as unread.
+    checks.push({
+      id: 'workspace-network',
+      group: 'Workspace',
+      status: 'warn',
+      summary: 'Cannot determine whether the workspace network has an external route',
+      remediation: 'Check the container runtime, then run this check again',
+    });
+  } else if (posture.networkInternal) {
     checks.push({
       id: 'workspace-network',
       group: 'Workspace',
       status: 'ok',
       summary: 'Egress is restricted to the workspace network (no external route)',
+    });
+  } else if (posture.network === 'restricted') {
+    // Recorded as restricted, but the live network is still an ordinary
+    // bridge: the switch has not been applied. Reporting this workspace
+    // isolated while its route is open is exactly the dishonest answer.
+    checks.push({
+      id: 'workspace-network',
+      group: 'Workspace',
+      status: 'warn',
+      summary: 'Policy is restricted but the live network still has an external route; it flips on the next start',
+      remediation: 'Run: sandbox workspace start',
     });
   } else {
     checks.push({
