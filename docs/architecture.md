@@ -514,7 +514,8 @@ runtime socket — a socket bind is not refused by this guard.
 - The isolation boundary is the container, not the window: agents in
   one container share a user and can read one another's files.
 - The mount guard keeps the host HOME as a whole, the sandbox state
-  directory, and every ancestor of both out of the container — so the
+  directory, every ancestor of both, and every descendant of the state
+  directory out of the container — so the
   registry, the credential files and every dotfile are unreachable by a
   path that names them. It is a path guard, not a capability boundary:
   it does not refuse a bind of the container runtime's socket, and
