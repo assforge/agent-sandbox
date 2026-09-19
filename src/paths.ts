@@ -12,15 +12,22 @@ export function sandboxDir(homeDir: string): string {
 }
 
 /**
+ * Whether the one-time move is still pending. Read-only on purpose:
+ * doctor is a probe, so it reports a pending move instead of performing
+ * it. Never merges, so a split state is impossible to describe here.
+ */
+export function homeMovePending(homeDir: string): boolean {
+  return !existsSync(sandboxDir(homeDir)) && existsSync(join(homeDir, LEGACY_DIR_NAME));
+}
+
+/**
  * One-time move from the legacy home directory. Moves only when the new
- * directory does not exist yet and the legacy one does; never merges, so
- * a split state is impossible to create here. Returns true when it moved.
+ * directory does not exist yet and the legacy one does. Returns true when
+ * it moved. Mutating: callers that must not write (doctor) use
+ * homeMovePending instead.
  */
 export function migrateHomeDir(homeDir: string): boolean {
-  const next = sandboxDir(homeDir);
-  if (existsSync(next)) return false;
-  const prev = join(homeDir, LEGACY_DIR_NAME);
-  if (!existsSync(prev)) return false;
-  renameSync(prev, next);
+  if (!homeMovePending(homeDir)) return false;
+  renameSync(join(homeDir, LEGACY_DIR_NAME), sandboxDir(homeDir));
   return true;
 }

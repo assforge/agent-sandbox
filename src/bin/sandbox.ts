@@ -41,7 +41,7 @@ import {
 import { withRegistryTxn } from '../registry-txn.js';
 import { defaultCanonicalize, resolveWorkspace } from '../resolve.js';
 import { restoreClaimOf, restoreClaimState, restorePendingRefusal, restoreRerunCommand } from '../restore-claim.js';
-import { migrateHomeDir, sandboxDir } from '../paths.js';
+import { homeMovePending, migrateHomeDir, sandboxDir } from '../paths.js';
 import { doctorExitCode, renderDoctorJson, renderDoctorText, runDoctor } from '../doctor.js';
 import { agentHelp, linkHelp, credentialsHelp, describeAction, imageHelp, unlinkHelp, runtimeHelp, terminalHelp, topHelp, updateHelp, workspaceHelp } from '../help.js';
 
@@ -438,10 +438,16 @@ export async function main(argv: string[], deps: MainDeps): Promise<number> {
 }
 
 async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
-  if (migrateHomeDir(deps.homeDir)) {
-    deps.stderr('sandbox home moved from ~/.sandbox to ~/.agent.sandbox\n');
-  }
   const parsed = parseArgs(argv);
+  // The home move is a renameSync, so it belongs to commands that may
+  // mutate. help and version touch nothing, and doctor is read-only by
+  // contract 4: it reports a pending move through its own check instead
+  // of performing one as a side effect of being asked a question.
+  if (parsed.kind !== 'help' && parsed.kind !== 'version' && parsed.kind !== 'doctor') {
+    if (migrateHomeDir(deps.homeDir)) {
+      deps.stderr('sandbox home moved from ~/.sandbox to ~/.agent.sandbox\n');
+    }
+  }
   const agents = agentRegistry(deps);
   switch (parsed.kind) {
     case 'help':
@@ -454,17 +460,15 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
       const registry = loadRegistryOrThrow(deps);
       const resolution = resolveWorkspace({ explicitRoot: parsed.workspace, cwd: deps.cwd, registry });
       const current = resolution.registered ? lookupWorkspace(registry, resolution.root) : null;
-      const network = current ? networkName(current.id) : '';
-      const networkListed = current
-        ? deps.runner.run('docker', ['network', 'ls', '--filter', `name=^${network}$`, '--format', '{{.Name}}'])
-        : null;
-      const networkExists =
-        networkListed !== null &&
-        networkListed.status === 0 &&
-        networkListed.stdout.split('\n').map((line) => line.trim()).includes(network);
-      const deadWindows = current ? deadRosterWindows(deps, current) : [];
       const doctorRt = current ? selectRuntime(deps, current) : selectRuntime(deps);
       const doctorTerm = current ? selectTerminal(deps, current) : selectTerminal(deps);
+      // Probed through the workspace's own engine. The literal docker call
+      // that used to sit here reported on a runtime the workspace may not
+      // use at all, and never reached the apple engine's own probe.
+      const network = current ? networkName(current.id) : '';
+      const networkExists = current ? doctorRt.networkExists(deps.runner, network) : false;
+      const networkInternal = current ? probeNetworkInternal(doctorRt, deps.runner, network) : null;
+      const deadWindows = current ? deadRosterWindows(deps, current) : [];
       // Doctor never refuses on a claim and never clears one: it reports it, like `status`.
       const claim = current ? restoreClaimOf(current) : null;
       let runningVersions: Record<string, string> | null = null;
@@ -493,8 +497,10 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
           image: current?.image ?? null,
           network: current ? current.network : null,
           networkExists,
+          networkInternal,
           deadWindows,
           runningVersions,
+          pendingHomeMove: homeMovePending(deps.homeDir),
           pendingRestore: claim ? { state: restoreClaimState(claim), source: claim.source } : null,
         },
       );
@@ -717,6 +723,7 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
   const names = victims.map((item) => `${item.entry.id}:${item.fork}`).join(', ');
   const approved = await deps.confirm(`remove ${victims.length} orphan fork(s): ${names}? Credential files are kept.`);
   if (!approved) throw new CliError('prune cancelled; nothing was changed', 1);
+  const skipped: string[] = [];
   for (const item of victims) {
     const handle = acquireLock(deps.lockDir, item.entry.id);
     try {
@@ -726,6 +733,11 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
       if (!pre) throw new CliError(`workspace is not registered: ${item.entry.root}`, 1);
       // Authoritative re-check under the lock, before the one-shot below.
       refuseIfRestorePending(pre);
+      if (!pre.forks.includes(item.fork)) continue;
+      if (pre.instances.some((instance) => instance.name === item.fork)) {
+        skipped.push(item.fork);
+        continue;
+      }
       // The home volume rides along at /v: without it the one-shot would
       // prune an ephemeral container filesystem and report success.
       //
@@ -736,7 +748,7 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
         deps.runner,
         requireImage(pre),
         { SANDBOX_GENERATION: 'prune', SANDBOX_CONFIG_FINGERPRINT: 'prune' },
-        ['sh', '-c', `rm -rf '/v/instances/${item.fork}'`],
+        ['sh', '-c', 'rm -rf -- "$1"', 'sh', `/v/instances/${item.fork}`],
         { mounts: [{ source: pre.homeVolume, target: '/v' }] },
       );
       if (probed.status !== 0) throw new CliError(`cannot prune fork ${item.fork}`, 1);
@@ -749,6 +761,9 @@ async function pruneForks(deps: MainDeps, targets: WorkspaceEntry[]): Promise<nu
     } finally {
       handle.release();
     }
+  }
+  if (skipped.length > 0) {
+    deps.stderr(`skipped fork(s) that became live while confirming: ${skipped.join(', ')}\n`);
   }
   deps.stdout(`pruned forks: ${names}; credential files kept\n`);
   return 0;
@@ -805,6 +820,20 @@ function deadRosterWindows(deps: MainDeps, entry: WorkspaceEntry): string[] {
     if (!term.paneAlive(deps.runner, entry.session, instance.window)) dead.push(instance.window);
   }
   return dead;
+}
+
+/**
+ * The live internal flag of the workspace network, or null when the engine
+ * cannot answer. Doctor is a diagnostic: the apple engine fails closed by
+ * throwing on an undeterminable mode, which is right for a start path and
+ * wrong for a probe, so a throw reads as "cannot determine" here.
+ */
+function probeNetworkInternal(rt: RuntimeEngine, runner: CommandRunner, network: string): boolean | null {
+  try {
+    return rt.networkInternal(runner, network);
+  } catch {
+    return null;
+  }
 }
 
 /** Read the workspace id from a backup manifest without touching the registry. */function peekBackupId(outputDir: string): string {
@@ -1122,13 +1151,32 @@ async function workspaceCommand(deps: MainDeps, action: string, rest: string[], 
         deps.stdout(`plan: switch network ${entry.network} -> ${network} (recreates the container on next start)\n`);
       }
       if (runtime !== undefined && runtime !== entry.runtime) {
-        deps.stdout(`plan: switch runtime ${entry.runtime} -> ${runtime} (recreates the container on next start)\n`);
+        deps.stdout(`plan: switch runtime ${entry.runtime} -> ${runtime} (stops and removes the old container and kills the session; both are recreated on next start)\n`);
       }
       if (terminal !== undefined && terminal !== entry.terminal) {
-        deps.stdout(`plan: switch terminal ${entry.terminal} -> ${terminal} (recreates windows on next start)\n`);
+        deps.stdout(`plan: switch terminal ${entry.terminal} -> ${terminal} (kills the old session; windows are recreated on next start)\n`);
       }
       const approved = await deps.confirm('apply these changes?');
       if (!approved) throw new CliError('configure cancelled; nothing was changed', 1);
+      // A switch migrates nothing, so the previous engine's resources are
+      // retired here. The container is owned by the old runtime -- the new
+      // one would refuse it as foreign, leaving it unreachable by the CLI --
+      // and a window's launch command embeds the old runtime's binary, so a
+      // runtime switch invalidates the windows even when the terminal engine
+      // does not change. Retiring before the save keeps a failed retirement
+      // from recording a switch that never happened.
+      const previousRt = selectRuntime(deps, entry);
+      const previousTerm = selectTerminal(deps, entry);
+      const runtimeChanges = runtime !== undefined && runtime !== entry.runtime;
+      const terminalChanges = terminal !== undefined && terminal !== entry.terminal;
+      if (runtimeChanges || terminalChanges) {
+        if (runtimeChanges) {
+          const state = previousRt.containerState(deps.runner, entry.container, entry.id);
+          if (state === 'running') previousRt.stopContainer(deps.runner, entry.container);
+          if (state === 'running' || state === 'stopped') previousRt.removeContainer(deps.runner, entry.container);
+        }
+        if (previousTerm.sessionAlive(deps.runner, entry.session)) previousTerm.killSession(deps.runner, entry.session);
+      }
       withRegistry(deps, (live) => {
         const target = live.workspaces[entry.id];
         if (!target) throw new CliError(`workspace is not registered: ${entry.root}`, 1);

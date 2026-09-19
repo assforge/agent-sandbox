@@ -34,9 +34,20 @@ export function newWindow(runner: CommandRunner, session: string, window: string
   }
 }
 
+/**
+ * A failed listing is not an absence. `list-windows` writes nothing to
+ * stdout when it fails (a missing session, a tmux error), so a body that
+ * reads only stdout turns every failure into "the window is gone". That
+ * is the unsafe direction at the close call site: it skips the
+ * confirmation prompt, and the window is then found and killed by a
+ * later probe without the user ever having agreed to it. Fail closed.
+ */
 export function windowExists(runner: CommandRunner, session: string, window: string): boolean {
-  return runner.run('tmux', ['list-windows', '-t', session, '-F', '#{window_name}']).stdout
-    .split('\n').map((line) => line.trim()).includes(window);
+  const listed = runner.run('tmux', ['list-windows', '-t', session, '-F', '#{window_name}']);
+  if (listed.status !== 0) {
+    throw new Error(`cannot list tmux windows for ${session}: ${listed.stderr.trim()}`);
+  }
+  return listed.stdout.split('\n').map((line) => line.trim()).includes(window);
 }
 
 export function selectWindow(runner: CommandRunner, session: string, window: string): void {
@@ -71,13 +82,20 @@ export function killSession(runner: CommandRunner, session: string): void {
   }
 }
 
-/** Close one window; missing windows are already closed. */
+/**
+ * Close one window; a missing window is already closed.
+ *
+ * No pre-probe: probe-then-kill *is* the race the probe was meant to
+ * close, and the caller has already probed under the lock. `kill-window`
+ * is the test. A "not found" answer is the already-closed case; anything
+ * else fails closed rather than reporting a close that did not happen.
+ */
 export function closeWindow(runner: CommandRunner, session: string, window: string): void {
-  if (!windowExists(runner, session, window)) return;
   const closed = runner.run('tmux', ['kill-window', '-t', `${session}:${window}`]);
-  if (closed.status !== 0) {
-    throw new Error(`cannot close tmux window ${session}:${window}: ${closed.stderr.trim()}`);
-  }
+  if (closed.status === 0) return;
+  const detail = `${closed.stdout} ${closed.stderr}`;
+  if (/can't find (window|session)|no such (window|session)|no server running/.test(detail)) return;
+  throw new Error(`cannot close tmux window ${session}:${window}: ${closed.stderr.trim()}`);
 }
 
 /** Reconnect: switch the client inside tmux (SSH included), attach otherwise. */

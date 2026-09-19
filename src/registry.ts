@@ -172,8 +172,19 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
       throw bad('instance homeMode must be shared, fork, or fresh');
     }
   }
-  if (entry.forks !== undefined && (!Array.isArray(entry.forks) || !entry.forks.every((fork) => typeof fork === 'string'))) {
-    throw bad('forks must be an array of strings');
+  if (entry.forks !== undefined) {
+    if (!Array.isArray(entry.forks)) throw bad('forks must be an array of strings');
+    for (const fork of entry.forks) {
+      // A fork name is interpolated into the container path `/v/instances/<fork>`
+      // which is then handed to `rm -rf`. Passing it as argv stops it being
+      // *code*, but a name containing `/` or `..` would still walk out of
+      // instances/ and delete other state on the home volume. Enforced here, at
+      // the load boundary, so no source -- a hand-edited registry, a restored
+      // backup, or a future writer -- can seed one.
+      if (typeof fork !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fork)) {
+        throw bad(`forks entry is unsafe: ${String(fork)}`);
+      }
+    }
   }
   if (!Array.isArray(entry.mounts) || !entry.mounts.every((mount) => typeof mount === 'string')) {
     throw bad('mounts must be an array of strings');

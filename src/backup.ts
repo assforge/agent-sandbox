@@ -30,7 +30,11 @@ export function backupWorkspace(
   writeFileSync(join(outputDir, 'workspace.json'), `${JSON.stringify(redactedConfig(entry), null, 2)}\n`, 'utf8');
   const stateDir = join(outputDir, 'home');
   mkdirSync(stateDir, { recursive: true });
-  runner.copyFromContainer(entry.container, '/home/agent', stateDir);
+  // Trailing `/.` copies the *contents* of /home/agent. Without it the
+  // destination directory already exists, so the runtime copies the source
+  // directory into it and the snapshot gains a spurious `agent/` level that
+  // restore then reproduces as `/home/agent/home/agent/...`.
+  runner.copyFromContainer(entry.container, '/home/agent/.', stateDir);
   return { outputDir, workspace: entry.id, copiedState: true };
 }
 
@@ -110,7 +114,19 @@ export function planRestore(registry: Registry, outputDir: string): WorkspaceEnt
   const rawMounts = record['mounts'];
   const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
   const rawForks = record['forks'];
-  const forks = Array.isArray(rawForks) && rawForks.every((fork): fork is string => typeof fork === 'string') ? rawForks : [];
+  // A restored fork name is later interpolated into a shell command by fork
+  // pruning, so it is validated here with the same charset every other name
+  // gets. Accepting an arbitrary string array let a tampered backup smuggle
+  // shell metacharacters and path traversal into that command.
+  const forks = Array.isArray(rawForks)
+    ? rawForks.map((fork) => {
+        if (typeof fork !== 'string') throw new Error('backup workspace.json has a non-string forks entry');
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fork)) {
+          throw new Error(`backup workspace.json has an unsafe forks entry: ${fork}`);
+        }
+        return fork;
+      })
+    : [];
   const entry: WorkspaceEntry = {
     id,
     root: requiredRoot(record, 'root'),
@@ -135,7 +151,10 @@ export function planRestore(registry: Registry, outputDir: string): WorkspaceEnt
  * half of a restore, and it is deliberately outside the registry transaction.
  */
 export function copyRestoreHome(runner: BackupRunner, entry: WorkspaceEntry, outputDir: string): void {
-  runner.copyToContainer(entry.container, join(outputDir, 'home'), '/home/agent');
+  // Mirrors the backup side: `/.` copies the contents of the snapshot's home
+  // directory into the live one. `path.join` would normalise a `.` segment
+  // away, so the suffix is concatenated.
+  runner.copyToContainer(entry.container, `${join(outputDir, 'home')}/.`, '/home/agent');
 }
 
 /**

@@ -133,15 +133,30 @@ describe('main', () => {
     expect(broken.err.join('')).toMatch(/cannot check/);
   });
 
-  it('migrates the legacy home directory before dispatch', async () => {
+  it('moves the legacy home directory on mutating commands only', async () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
     try {
       mkdirSync(join(home, '.sandbox'), { recursive: true });
-      const d = deps({ homeDir: home });
-      expect(await main(['--version'], d)).toBe(0);
-      expect(d.err.join('')).toContain('sandbox home moved from ~/.sandbox to ~/.agent.sandbox');
-      expect(existsSync(join(home, '.agent.sandbox'))).toBe(true);
+      saveRegistry(join(home, '.sandbox', 'registry.json'), emptyRegistry());
+      // The move is a renameSync, so help, version and doctor must not
+      // trigger it. doctor is read-only by contract 4: asking the question
+      // reports a pending move (its own check) instead of performing one.
+      for (const argv of [['--version'], ['--help'], ['doctor']]) {
+        const probe = deps({ homeDir: home, cwd: join(home, 'proj') });
+        expect(await main(argv, probe)).toBe(0);
+        expect(probe.err.join('')).not.toContain('sandbox home moved');
+        expect(existsSync(join(home, '.sandbox', 'registry.json'))).toBe(true);
+        expect(existsSync(join(home, '.agent.sandbox'))).toBe(false);
+      }
+      const doctor = deps({ homeDir: home, cwd: join(home, 'proj') });
+      await main(['doctor'], doctor);
+      expect(doctor.out.join('')).toContain('home-dir');
+      // A mutating command performs the move, carrying the registry over.
+      const list = deps({ homeDir: home, cwd: join(home, 'proj') });
+      expect(await main(['workspace', 'list'], list)).toBe(0);
+      expect(list.err.join('')).toContain('sandbox home moved from ~/.sandbox to ~/.agent.sandbox');
       expect(existsSync(join(home, '.sandbox'))).toBe(false);
+      expect(existsSync(join(home, '.agent.sandbox', 'registry.json'))).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

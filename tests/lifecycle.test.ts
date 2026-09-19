@@ -24,6 +24,10 @@ class FakeWorld {
   lastBuildArgs: Record<string, string> = {};
   curlText = '2.1.277\n';
   execVersions: string | null = null;
+  /** When true, list-windows answers with a failure instead of a listing. */
+  windowListingFails = false;
+  /** When set, kill-window fails with this detail instead of closing. */
+  killWindowFails: string | null = null;
 
   imageIdOf = (image: string): string => {
     const alnum = image.replace(/[^a-zA-Z0-9]/g, '');
@@ -254,6 +258,10 @@ class FakeWorld {
       this.sessions.set(name, new Map([[args[windowIndex + 1] as string, true]]));
       return { status: 0, stdout: '', stderr: '' };
     }
+    if (args[0] === 'kill-session') {
+      this.sessions.delete(args[args.indexOf('-t') + 1] as string);
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (args[0] === 'new-window') {
       const target = (args[args.indexOf('-t') + 1] as string).replace(/:$/, '');
       const name = args[args.indexOf('-n') + 1] as string;
@@ -263,6 +271,7 @@ class FakeWorld {
     if (args[0] === 'list-windows') {
       const session = args[args.indexOf('-t') + 1] as string;
       this.listWindowsCalls += 1;
+      if (this.windowListingFails) return { status: 1, stdout: '', stderr: 'no server running' };
       if (this.revive && this.listWindowsCalls > this.reviveAfterListWindows) {
         this.sessions.get(this.revive.session)?.set(this.revive.window, true);
       }
@@ -288,6 +297,9 @@ class FakeWorld {
     if (args[0] === 'kill-window') {
       const target = args[args.indexOf('-t') + 1] as string;
       const [session, window] = target.split(':');
+      if (this.killWindowFails !== null) {
+        return { status: 1, stdout: '', stderr: this.killWindowFails };
+      }
       this.sessions.get(session as string)?.delete(window as string);
       return { status: 0, stdout: '', stderr: '' };
     }
@@ -810,6 +822,198 @@ describe('workspace lifecycle flows', () => {
       expect(err.join('')).toContain('became live');
       expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name)).toContain('w2');
       expect(world.sessions.get(session)?.has('w2')).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to close when the window listing itself fails', async () => {
+    const { home, root, world, deps, err } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const session = `sandbox-${id}`;
+      world.windowListingFails = true;
+      const before = world.calls.length;
+      // An unreadable listing must not read as "the window is gone": that
+      // answer skipped the prompt and a later probe killed it unconfirmed.
+      await expect(main(['workspace', 'close', 'codex', '--workspace', root], counting)).rejects.toThrow(
+        /cannot list tmux windows/,
+      );
+      expect(err.join('')).not.toContain('closed instance');
+      expect(confirms).toBe(0);
+      expect(world.calls.slice(before).some((call) => call.includes('kill-window'))).toBe(false);
+      expect(world.sessions.get(session)?.has('codex')).toBe(true);
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name)).toContain('codex');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still closes when tmux reports the window already gone', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      let confirms = 0;
+      const counting = { ...deps, confirm: async () => { confirms += 1; return true; } };
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      // The window was listed, so the prompt still happens; the close then
+      // loses the race to something else and must not be reported as failed.
+      world.killWindowFails = "can't find window: codex";
+      expect(await main(['workspace', 'close', 'codex', '--workspace', root], counting)).toBe(0);
+      expect(confirms).toBe(1);
+      expect(out.join('')).toContain('closed instance codex');
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name)).not.toContain('codex');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when the close fails for any other reason', async () => {
+    const { home, root, world, deps } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      world.killWindowFails = 'permission denied';
+      await expect(main(['workspace', 'close', 'codex', '--workspace', root], deps)).rejects.toThrow(
+        /cannot close tmux window/,
+      );
+      // The registry keeps the instance: a close that did not happen is
+      // never reported as one.
+      expect(loadRegistry(join(home, '.agent.sandbox', 'registry.json')).workspaces[id]?.instances.map((item) => item.name)).toContain('codex');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recreates the container when a fingerprinted input changes', async () => {
+    const { home, root, world, deps } = setup();
+    const extra = mkdtempSync(join(tmpdir(), 'sandbox-mount-'));
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const container = `sandbox-${id}`;
+      const first = world.containers.get(container)?.fingerprint ?? '';
+      expect(first).not.toBe('');
+      // A start that changes nothing must not recreate, or every start
+      // would destroy the running agents.
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      expect(world.containers.get(container)?.fingerprint).toBe(first);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--add-mount', extra], deps)).toBe(0);
+      expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
+      // The container that is running must report the configuration it was
+      // created with: leaving the old one up makes the readiness loop wait
+      // for a fingerprint that container can never produce.
+      expect(world.containers.get(container)?.fingerprint).not.toBe(first);
+      expect(world.containers.get(container)?.running).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+      rmSync(extra, { recursive: true, force: true });
+    }
+  });
+
+  it('probes the workspace network through the workspace runtime, not docker', async () => {
+    const { home, root, world, deps } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'apple'], deps)).toBe(0);
+      const appleDeps = {
+        ...deps,
+        runner: {
+          run: (command: string, args: string[]) => {
+            // Delegate first so the call is recorded on the shared log, then
+            // override the answer for the apple CLI.
+            const recorded = world.run(command, args);
+            if (command !== 'container') return recorded;
+            // Well-formed but degenerate: enough for the apple engine to
+            // answer, and an unknown network mode so its networkInternal
+            // fails closed. Doctor must survive that, not crash on it.
+            if (args[0] === 'list' || (args[0] === 'network' && args[1] === 'list')) {
+              return { status: 0, stdout: '[]', stderr: '' };
+            }
+            return { status: 0, stdout: '', stderr: '' };
+          },
+        },
+      };
+      world.calls.length = 0;
+      expect(await main(['doctor'], appleDeps)).toBe(1);
+      // The literal docker probe reported on a runtime this workspace does
+      // not use, and never reached the apple engine's own probe.
+      expect(world.calls.filter((call) => call[0] === 'docker' && call[1] === 'network' && call[2] === 'ls')).toEqual([]);
+      expect(world.calls.some((call) => call[0] === 'container' && call[1] === 'network')).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('retires the previous terminal engine when the terminal switches', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const container = `sandbox-${id}`;
+      const session = `sandbox-${id}`;
+      expect(world.sessions.get(session)?.has('codex')).toBe(true);
+      world.calls.length = 0;
+      expect(await main(['workspace', 'configure', '--workspace', root, '--terminal', 'herder'], deps)).toBe(0);
+      // The windows belong to the engine that made them, and the plan now
+      // says so instead of only promising to recreate them later.
+      expect(out.join('')).toContain('kills the old session');
+      expect(world.calls.some((call) => call.includes('kill-session'))).toBe(true);
+      expect(world.sessions.has(session)).toBe(false);
+      // A terminal switch touches neither the container nor the runtime.
+      expect(world.containers.get(container)?.running).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('retires the previous container and session when the runtime switches', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      expect(await main(['workspace', 'register', '--root', root], deps)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], deps)).toBe(0);
+      expect(await main(['codex', '--workspace', root, '--no-attach'], deps)).toBe(0);
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const container = `sandbox-${id}`;
+      const session = `sandbox-${id}`;
+      expect(world.containers.get(container)?.running).toBe(true);
+      world.calls.length = 0;
+      expect(await main(['workspace', 'configure', '--workspace', root, '--runtime', 'apple'], deps)).toBe(0);
+      expect(out.join('')).toContain('stops and removes the old container');
+      // The old container is owned by the old runtime: leaving it up makes
+      // it unreachable, because the new engine reads it as foreign.
+      expect(world.containers.has(container)).toBe(false);
+      expect(world.calls.some((call) => call[0] === 'docker' && call.includes('stop'))).toBe(true);
+      expect(world.calls.some((call) => call[0] === 'docker' && call.includes('rm'))).toBe(true);
+      // The windows embed the old runtime's binary, so they go too.
+      expect(world.sessions.has(session)).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });

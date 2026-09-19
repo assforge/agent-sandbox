@@ -210,9 +210,12 @@ export const AppleContainerRuntimeEngine: RuntimeEngine = {
     // path. The Apple builder may not create deep targets, so ensure the
     // mount point exists first with the same privileged one-shot pattern
     // as the home-volume repair above.
+    // The path is passed as an argv element, never interpolated into the
+    // script text: a workspace path containing an apostrophe or a shell
+    // metacharacter must not become executable code in a root one-shot.
     const prepared = runner.run('container', [
       'run', '--rm', '--user', 'root',
-      '--entrypoint', 'sh', options.image, '-c', `mkdir -p '${entry.root}'`,
+      '--entrypoint', 'sh', options.image, '-c', 'mkdir -p "$1"', 'sh', entry.root,
     ]);
     if (prepared.status !== 0) fail(`apple runtime: cannot prepare workspace mount: ${errorOf(prepared)}`);
     const args = [

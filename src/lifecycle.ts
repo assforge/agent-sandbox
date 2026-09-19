@@ -111,14 +111,24 @@ export function ensureReady(
   }
   runtime.ensureNetwork(runner, network, entry.id, entry.network === 'restricted');
   if (state !== 'absent') {
-    // Cut over by recreating when the image or the network attachment no
-    // longer matches the running container. Runtime switches are already
-    // refused as foreign by containerState, so only image and network
-    // drift recreate here.
+    // Cut over by recreating when the running container no longer matches
+    // the configuration it must report. Runtime switches are already
+    // refused as foreign by containerState, so image, network, and
+    // fingerprint drift recreate here. ready.json is the container's own
+    // record of what it was created with, and `entry.mounts` feeds the
+    // fingerprint above -- so a mount change recreates instead of leaving
+    // a container whose environment the readiness loop below can never
+    // match. A container that predates the fingerprint reads as unknown
+    // and is left alone, which is the previous behaviour.
     const runningId = runtime.containerImageId(runner, entry.container);
     const desiredId = runtime.referenceImageId(runner, options.image);
     const attached = runtime.containerNetworks(runner, entry.container);
-    if ((runningId && desiredId && !sameImageId(runningId, desiredId)) || !attached.includes(network)) {
+    const recorded = runtime.readReadyJson(runner, entry.container)?.fingerprint;
+    if (
+      (runningId && desiredId && !sameImageId(runningId, desiredId)) ||
+      !attached.includes(network) ||
+      (recorded !== undefined && recorded !== fingerprint)
+    ) {
       runtime.removeContainer(runner, entry.container);
       state = 'absent';
     }

@@ -11,7 +11,7 @@ const healthy: ProbeEnv = {
 
 describe('runDoctor', () => {
   it('reports ok for a healthy host with a selected image', () => {
-    const checks = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
+    const checks = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, networkInternal: true, deadWindows: [] });
     expect(checks.every((check) => check.status === 'ok')).toBe(true);
     expect(doctorExitCode(checks)).toBe(0);
   });
@@ -77,12 +77,27 @@ describe('runDoctor', () => {
     expect(docker.find((check) => check.id === 'runtime-maturity')).toBeUndefined();
   });
 
-  it('reports network posture per workspace policy', () => {
-    const restricted = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
-    expect(restricted.find((check) => check.id === 'workspace-network')?.status).toBe('ok');
-    const open = runDoctor(healthy, { image: 'sha256:abc', network: 'open', networkExists: true, deadWindows: [] });
-    expect(open.find((check) => check.id === 'workspace-network')?.status).toBe('warn');
-    expect(open.find((check) => check.id === 'workspace-network')?.remediation).toMatch(/--network restricted/);
+  it('reports network posture from the live flag, not the workspace policy', () => {
+    const posture = (overrides: Partial<{ network: 'open' | 'restricted'; networkExists: boolean; networkInternal: boolean | null }>) => {
+      const found = runDoctor(healthy, {
+        image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [], ...overrides,
+      });
+      return found.find((check) => check.id === 'workspace-network');
+    };
+    // A measurement that agrees with the policy.
+    expect(posture({ networkInternal: true })?.status).toBe('ok');
+    // The policy is a record of intent. Restricted on paper but still an
+    // ordinary bridge is exactly the state the old check called isolated.
+    expect(posture({ networkInternal: false })?.status).toBe('warn');
+    expect(posture({ networkInternal: false })?.summary).toMatch(/flips on the next start/);
+    // No measurement must never be reported as isolation.
+    expect(posture({})?.status).toBe('warn');
+    expect(posture({})?.summary).toMatch(/Cannot determine/);
+    expect(posture({ networkInternal: null })?.status).toBe('warn');
+    // A live internal network under an open policy is still isolated.
+    expect(posture({ network: 'open', networkInternal: true })?.status).toBe('ok');
+    expect(posture({ network: 'open', networkInternal: false })?.status).toBe('warn');
+    expect(posture({ network: 'open', networkInternal: false })?.remediation).toMatch(/--network restricted/);
     const missing = runDoctor(healthy, { image: 'sha256:abc', network: 'open', networkExists: false, deadWindows: [] });
     expect(missing.find((check) => check.id === 'workspace-network')?.status).toBe('fail');
     expect(doctorExitCode(missing)).toBe(1);
