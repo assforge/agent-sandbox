@@ -84,6 +84,11 @@ describe('herder engine', () => {
     expect(() => HerderTerminalEngine.closeWindow(runner, 'sandbox-w', 'w2')).toThrow(/tab_not_found/);
   });
 
+  it('lists windows through the terminal engine, not a tmux call', () => {
+    const tabs = scripted({ 'herdr --session sandbox-w tab list': { status: 0, stdout: TAB_LIST, stderr: '' } });
+    expect(HerderTerminalEngine.listWindows(tabs.runner, 'sandbox-w')).toEqual(['w1', 'w2']);
+  });
+
   it('treats error payloads and dead servers as failed lookups', () => {
     const down = scripted({
       'herdr --session sandbox-w session list': {

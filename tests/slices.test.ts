@@ -98,6 +98,11 @@ describe('config', () => {
     // Paths containing neither are still mountable, including a child of HOME.
     expect(rejectForbiddenMount('/opt/data', '/Users/x')).toBeNull();
     expect(rejectForbiddenMount('/Users/x/work', '/Users/x')).toBeNull();
+    // But a child of the state directory is a registry or credential file
+    // by another name: mounting it would do directly what the ancestor
+    // rule exists to prevent.
+    expect(rejectForbiddenMount('/Users/x/.agent.sandbox/registry.json', '/Users/x')).toMatch(/sandbox state/);
+    expect(rejectForbiddenMount('/Users/x/.agent.sandbox/w/instances/a.env', '/Users/x')).toMatch(/inside/);
   });
 
   it('redacts instance lists without dropping entries', () => {
@@ -310,7 +315,7 @@ describe('locks and backups', () => {
       expect(receipt).toMatchObject({ workspace: entry.id, copiedState: true });
       expect(existsSync(join(out, 'workspace.json'))).toBe(true);
       delete registry.workspaces[entry.id];
-      const restored = restoreWorkspace(runner, registry, out);
+      const restored = restoreWorkspace(runner, registry, out, dir);
       expect(restored.id).toBe(entry.id);
       expect(restored.image).toBe('sha256:one');
       expect(restored.root).toBe('/w');
@@ -323,7 +328,7 @@ describe('locks and backups', () => {
       // restore reproduces `/home/agent/home/agent/...`.
       expect(calls[0]).toBe(`from:${entry.container}:/home/agent/.:${join(out, 'home')}`);
       expect(calls[1]).toBe(`to:${entry.container}:${join(out, 'home')}/.:/home/agent`);
-      expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'))).toThrow(/missing or invalid/);
+      expect(() => restoreWorkspace(runner, emptyRegistry(), join(dir, 'missing'), dir)).toThrow(/missing or invalid/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -339,7 +344,7 @@ describe('locks and backups', () => {
         JSON.stringify({ id: '../evil', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: ['/w'] }),
         'utf8',
       );
-      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), out)).toThrow(/unsafe id/);
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), out, dir)).toThrow(/unsafe id/);
       // A fork name later reaches fork pruning, so the restore boundary
       // enforces the shared safe-name charset there as well.
       const sneaky = join(dir, 'sneaky');
@@ -349,7 +354,17 @@ describe('locks and backups', () => {
         JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: ['/w'], forks: ['../evil'] }),
         'utf8',
       );
-      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), sneaky)).toThrow(/unsafe forks/);
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), sneaky, dir)).toThrow(/unsafe forks/);
+      // A hand-edited manifest must not smuggle in a mount that
+      // registration would refuse; the failure lands before any claim.
+      const exposed = join(dir, 'exposed');
+      mkdirSync(exposed, { recursive: true });
+      writeFileSync(
+        join(exposed, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [dir], forks: [] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), exposed, dir)).toThrow(/refused path/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

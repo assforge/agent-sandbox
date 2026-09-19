@@ -272,6 +272,18 @@ export const HerderTerminalEngine: TerminalEngine = {
     // leave the tab alive while the caller reports it closed or respawned.
     herdrCall(runner, session, ['tab', 'close', tabId]);
   },
+  listWindows(runner, session) {
+    let listed: Record<string, unknown>;
+    try {
+      listed = herdrCall(runner, session, ['tab', 'list']);
+    } catch (error) {
+      if (isServerDown(error)) return [];
+      throw error;
+    }
+    return resultList(listed, ['tabs'])
+      .map((entry) => entry['label'])
+      .filter((label): label is string => typeof label === 'string' && label.length > 0);
+  },
 
   listSessions(runner) {
     const payload = herdrCall(runner, 'default', ['session', 'list', '--json']);
