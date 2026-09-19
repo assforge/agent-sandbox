@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -357,14 +357,38 @@ describe('locks and backups', () => {
       expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), sneaky, dir)).toThrow(/unsafe forks/);
       // A hand-edited manifest must not smuggle in a mount that
       // registration would refuse; the failure lands before any claim.
+      // homeDir is passed canonical, as production passes os.homedir().
+      const home = realpathSync(dir);
       const exposed = join(dir, 'exposed');
       mkdirSync(exposed, { recursive: true });
       writeFileSync(
         join(exposed, 'workspace.json'),
-        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [dir], forks: [] }),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [home], forks: [] }),
         'utf8',
       );
-      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), exposed, dir)).toThrow(/refused path/);
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), exposed, home)).toThrow(/refused path/);
+      // Same guard for a rewritten root: pointing it at the state
+      // directory would bind host state on the next start.
+      const rooted = join(dir, 'rooted');
+      mkdirSync(rooted, { recursive: true });
+      writeFileSync(
+        join(rooted, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: join(home, '.agent.sandbox', 'stolen'), container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), rooted, home)).toThrow(/refused root/);
+      // Symlinked-home parity with registration: a missing path spelled
+      // through the link must get the same verdict `vettedMount` gives.
+      const link = join(dir, 'link-home');
+      symlinkSync(home, link);
+      const ghost = join(dir, 'ghost');
+      mkdirSync(ghost, { recursive: true });
+      writeFileSync(
+        join(ghost, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [join(link, '.agent.sandbox', 'ghost')], forks: [] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), ghost, link)).toThrow(/refused path/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

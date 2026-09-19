@@ -23,7 +23,8 @@ export function normalizeLexical(path: string): string {
 
 /**
  * Root, HOME and the sandbox state directory are rejected, together with every
- * ancestor of them. Rejecting only the exact paths was not enough: binding
+ * ancestor of them and every descendant of the state directory. Rejecting only
+ * the exact paths was not enough: binding
  * `/Users` or `/home` hands the container HOME — SSH keys, the registry and every
  * other dotfile — without ever naming HOME.
  * Callers must canonicalize symlinks via realpath first.

@@ -112,17 +112,20 @@ export function planRestore(registry: Registry, outputDir: string, homeDir: stri
   }
   const record = parsed as Record<string, unknown>;
   const id = requiredName(record, 'id');
+  // A restored root is bound read-write on the next start with no further
+  // vetting, so it gets the same guard as registration. Validated here,
+  // before the claim is written: a bad backup fails without freezing the
+  // workspace behind a claim it can never clear.
+  const root = requiredRoot(record, 'root');
+  const rootProblem = rejectForbiddenMount(defaultCanonicalize(root), homeDir);
+  if (rootProblem) throw new Error(`backup workspace.json has a refused root: ${root} (${rootProblem})`);
   const rawMounts = record['mounts'];
   const mounts = Array.isArray(rawMounts) && rawMounts.every((mount): mount is string => typeof mount === 'string') ? rawMounts : [];
-  // A restored mount is bound on the next start with no further vetting, so
-  // a hand-edited manifest must not smuggle in a path registration would
-  // refuse. Validated here, before the claim is written: a bad backup fails
-  // without freezing the workspace behind a claim it can never clear.
-  // Both sides go through the same canonicalization: tmpdir-style symlinked
-  // prefixes must compare equal on macOS.
-  const home = defaultCanonicalize(homeDir);
+  // Same guard for restored mounts. Only the mount path is canonicalized,
+  // matching registration (`vettedMount` passes `homeDir` through as-is);
+  // callers pass a canonical home directory as `os.homedir()` provides.
   for (const mount of mounts) {
-    const problem = rejectForbiddenMount(defaultCanonicalize(mount), home);
+    const problem = rejectForbiddenMount(defaultCanonicalize(mount), homeDir);
     if (problem) throw new Error(`backup workspace.json mounts a refused path: ${mount} (${problem})`);
   }
   const rawForks = record['forks'];
@@ -141,7 +144,7 @@ export function planRestore(registry: Registry, outputDir: string, homeDir: stri
     : [];
   const entry: WorkspaceEntry = {
     id,
-    root: requiredRoot(record, 'root'),
+    root,
     container: requiredName(record, 'container'),
     image: typeof record['image'] === 'string' ? (record['image'] as string) : null,
     previousImage: typeof record['previousImage'] === 'string' ? (record['previousImage'] as string) : null,
