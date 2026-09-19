@@ -73,12 +73,13 @@ export interface AgentCatalogEntry {
   latestEndpoint: string | null;
 }
 
-/** Built-in catalog: the four verified agents, as data. */
+/** Built-in catalog: the five verified agents, as data. */
 export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'claude', statePaths: ['.claude'], launch: ['claude'], npmPackage: null, pinnedVersion: '2.1.276', latestEndpoint: 'https://downloads.claude.ai/claude-code-releases/latest' },
   { name: 'opencode', statePaths: ['.config/opencode'], launch: ['opencode'], npmPackage: 'opencode-ai', pinnedVersion: '1.18.31', latestEndpoint: null },
   { name: 'codex', statePaths: ['.codex'], launch: ['codex'], npmPackage: '@openai/codex', pinnedVersion: '0.155.1', latestEndpoint: null },
   { name: 'copilot', statePaths: ['.copilot', '.config/github-copilot'], launch: ['copilot'], npmPackage: '@github/copilot', pinnedVersion: '1.0.86', latestEndpoint: null },
+  { name: 'pi', statePaths: ['.pi/agent'], launch: ['pi'], npmPackage: '@earendil-works/pi-coding-agent', pinnedVersion: '0.85.1', latestEndpoint: null },
 ];
 
 /** Agents with no verified install channel. Named here, never constructed. */

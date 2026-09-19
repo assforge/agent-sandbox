@@ -4,6 +4,7 @@
 ARG OPENCODE_VERSION=1.18.31
 ARG CODEX_VERSION=0.155.1
 ARG COPILOT_VERSION=1.0.86
+ARG PI_VERSION=0.85.1
 ARG CLAUDE_VERSION=2.1.276
 
 FROM node:22-bookworm-slim
@@ -11,6 +12,7 @@ FROM node:22-bookworm-slim
 ARG OPENCODE_VERSION
 ARG CODEX_VERSION
 ARG COPILOT_VERSION
+ARG PI_VERSION
 ARG CLAUDE_VERSION
 
 RUN apt-get update \
@@ -20,6 +22,7 @@ RUN apt-get update \
     "opencode-ai@${OPENCODE_VERSION}" \
     "@openai/codex@${CODEX_VERSION}" \
     "@github/copilot@${COPILOT_VERSION}" \
+    "@earendil-works/pi-coding-agent@${PI_VERSION}" \
   && npm cache clean --force
 
 # Non-root agent user for everything inside the workspace container.
