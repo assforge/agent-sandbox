@@ -1,0 +1,16 @@
+# Published artifact keeps the executable, its templates and docs.
+# Everything else stays in the repo: tests, CI config, changesets,
+# editor tooling, and local-state directories must never ship
+# (a memory index once published a pid file and session notes).
+node_modules/
+coverage/
+*.tgz
+.memsearch/
+tests/
+eslint.config.cjs
+.changeset/
+.github/
+review-findings*.md
+test-report.md
+discussions.md
+monitor-report.md
