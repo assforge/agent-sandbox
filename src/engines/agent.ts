@@ -76,7 +76,7 @@ export interface AgentCatalogEntry {
   latestEndpoint: string | null;
 }
 
-/** Built-in catalog: the eleven verified agents, as data. */
+/** Built-in catalog: the fourteen verified agents, as data. */
 export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'claude', statePaths: ['.claude'], launch: ['claude'], npmPackage: null, minimumVersion: '2.1.276', latestEndpoint: 'https://downloads.claude.ai/claude-code-releases/latest' },
   { name: 'opencode', statePaths: ['.config/opencode'], launch: ['opencode'], npmPackage: 'opencode-ai', minimumVersion: '1.18.31', latestEndpoint: null },
@@ -89,6 +89,9 @@ export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'kimi', statePaths: ['.kimi-code'], launch: ['kimi'], npmPackage: '@moonshot-ai/kimi-code', minimumVersion: '2.0.2', latestEndpoint: null },
   { name: 'mimo', statePaths: ['.config/mimocode', '.local/share/mimocode'], launch: ['mimo'], npmPackage: '@mimo-ai/cli', minimumVersion: '0.1.14', latestEndpoint: null },
   { name: 'auggie', statePaths: ['.augment'], launch: ['auggie'], npmPackage: '@augmentcode/auggie', minimumVersion: '0.36.0', latestEndpoint: null },
+  { name: 'cursor', statePaths: ['.cursor'], launch: ['cursor-agent', '--disable-auto-update'], npmPackage: null, minimumVersion: '2026.09.10', latestEndpoint: null },
+  { name: 'devin', statePaths: ['.config/devin', '.local/share/devin'], launch: ['devin'], npmPackage: null, minimumVersion: '3000.10.31', latestEndpoint: null },
+  { name: 'kiro', statePaths: ['.kiro'], launch: ['kiro-cli'], npmPackage: null, minimumVersion: '2.22.1', latestEndpoint: null },
 ];
 
 /** Agents with no verified install channel. Named here, never constructed. Empty today; the guard stays for future names. */

@@ -28,6 +28,9 @@ describe('parseArgs', () => {
     expect(SUPPORTED_AGENTS).toContain('kimi');
     expect(SUPPORTED_AGENTS).toContain('mimo');
     expect(SUPPORTED_AGENTS).toContain('auggie');
+    expect(SUPPORTED_AGENTS).toContain('cursor');
+    expect(SUPPORTED_AGENTS).toContain('devin');
+    expect(SUPPORTED_AGENTS).toContain('kiro');
     expect(parseArgs(['claude'])).toEqual({ kind: 'agent', agent: 'claude', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
     expect(parseArgs(['grok'])).toEqual({ kind: 'agent', agent: 'grok', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
     expect(parseArgs(['codex', '--name', 'sdk', '--', '-c', 'x'])).toEqual({

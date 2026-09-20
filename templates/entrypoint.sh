@@ -25,6 +25,10 @@ mkdir -p \
   "$HOME/.augment" \
   "$HOME/.local/share/mimocode" \
   "$HOME/.config/mimocode" \
+  "$HOME/.cursor" \
+  "$HOME/.config/devin" \
+  "$HOME/.local/share/devin" \
+  "$HOME/.kiro" \
   "$HOME/.config/opencode" \
   "$HOME/.config/github-copilot" \
   "$HOME/work" \
