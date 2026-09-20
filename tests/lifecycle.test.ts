@@ -535,6 +535,30 @@ describe('workspace lifecycle flows', () => {
     }
   });
 
+  it('rebuilds when the recording predates an engine', async () => {
+    const { home, root, world, deps, out } = setup();
+    try {
+      const counting = { ...deps, confirm: async () => true };
+      expect(await main(['workspace', 'register', '--root', root], counting)).toBe(0);
+      expect(await main(['image', 'activate', 'sandbox-workspace:current', '--workspace', root], counting)).toBe(0);
+      out.length = 0;
+      // Simulate an image recorded before cursor existed: hold every other
+      // latest at its recorded value so only the missing key can trigger.
+      world.curlText = '2.1.276\n';
+      const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
+      const id = Object.keys(registry.workspaces)[0] as string;
+      const entry = registry.workspaces[id];
+      if (!entry?.agentVersions) throw new Error('expected a recording from activate');
+      delete entry.agentVersions['cursor'];
+      saveRegistry(join(home, '.agent.sandbox', 'registry.json'), registry);
+      expect(await main(['workspace', 'upgrade', '--workspace', root], counting)).toBe(0);
+      expect(out.join('')).toContain('upgraded to sandbox-workspace:upgrade-');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('warns on agent version drift inside running containers', async () => {
     const { home, root, world, deps, out } = setup();
     try {

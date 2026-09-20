@@ -169,8 +169,6 @@ compares the running container against.
 
 ```
 
-`claude` was the first native channel; grok and agy joined it. A native
-
 `claude` was the first native channel — the vendor installer under
 `/opt/claude` — and it carries a floor like any other agent. A native
 engine reads its `latestEndpoint` for the latest release and returns

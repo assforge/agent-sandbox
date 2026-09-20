@@ -203,7 +203,9 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
       throw bad('agentVersions must be a string map');
     }
     for (const [name, version] of Object.entries(entry.agentVersions)) {
-      if (typeof version !== 'string') throw bad(`agentVersions entry ${name} must be a string`);
+      if (name.length === 0 || typeof version !== 'string' || version.length === 0) {
+        throw bad(`agentVersions entry ${name || '(empty)'} must be a non-empty string`);
+      }
     }
   }
   if (entry.pendingOperation !== undefined) {

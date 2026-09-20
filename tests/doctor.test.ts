@@ -80,6 +80,15 @@ describe('runDoctor', () => {
     const ancient = driftChecks({ '@openai/codex': '0.1.0' }, null);
     expect(ancient).toHaveLength(1);
     expect(ancient[0]?.summary).toMatch(/below the supported minimum/);
+    // Present in neither the running set nor the recording: absent from
+    // the image, not merely dormant. Without any recording, skip instead.
+    const recorded11: Record<string, string> = { ...clean };
+    delete recorded11['cursor'];
+    const running11: Record<string, string> = { ...clean };
+    delete running11['cursor'];
+    const missing = driftChecks(running11, recorded11);
+    expect(missing.map((check) => check.id)).toEqual(['agent-drift-cursor']);
+    expect(driftChecks(running11, null).some((check) => check.id === 'agent-drift-cursor')).toBe(false);
     const wired = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [], runningVersions: { claude: '9.9.9' }, recordedVersions: { claude: '2.1.276' } });
     expect(wired.find((check) => check.id === 'agent-drift-claude')?.status).toBe('warn');
     expect(doctorExitCode(wired)).toBe(0);

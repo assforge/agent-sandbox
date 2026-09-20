@@ -42,7 +42,7 @@ export function parseInspectedVersions(stdout: string): Record<string, string> {
   if (lines[8]) versions['@moonshot-ai/kimi-code'] = lines[8] as string;
   if (lines[9]) versions['@mimo-ai/cli'] = lines[9] as string;
   if (lines[10]) versions['@augmentcode/auggie'] = (lines[10] as string).split(' ')[0] as string;
-  if (lines[11]) versions['cursor'] = (lines[11] as string).split('-')[0] as string;
+  if (lines[11]) versions['cursor'] = (lines[11] as string).replace(/^cursor-agent /, '').split('-')[0] as string;
   if (lines[12]) versions['devin'] = (lines[12] as string).replace(/^devin /, '').split(' ')[0] as string;
   if (lines[13]) versions['kiro'] = (lines[13] as string).replace(/^kiro-cli /, '').split(' ')[0] as string;
   return versions;

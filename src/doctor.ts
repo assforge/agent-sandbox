@@ -170,6 +170,23 @@ export function driftChecks(running: Record<string, string>, recorded: Record<st
       });
     }
   }
+  // Engines in neither the running set nor the recording are absent from
+  // the image, not merely dormant: dormant ones are recorded at activation.
+  // Without any recording there is nothing to compare against, so skip.
+  if (recorded) {
+    for (const entry of BUILTIN_CATALOG) {
+      const key = entry.npmPackage ?? entry.name;
+      if (!Object.hasOwn(running, key) && !Object.hasOwn(recorded, key)) {
+        checks.push({
+          id: `agent-drift-${entry.name}`,
+          group: 'Workspace',
+          status: 'warn',
+          summary: `${entry.name} is absent from this image; upgrade to add it`,
+          remediation: 'Run: sandbox workspace upgrade',
+        });
+      }
+    }
+  }
   return checks;
 }
 
