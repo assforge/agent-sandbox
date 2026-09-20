@@ -63,11 +63,14 @@ export async function workspaceUpgrade(deps: MainDeps, registry: Registry, rest:
   const names = target === 'all' ? [...agents.keys()] : [target];
   const versionQueries = makeVersionRunner(deps);
   const resolved = resolveAgentVersions(deps, resolveAgentDefs(agents, names), versionQueries);
-  // Nothing to do when the image already recorded these exact versions.
-  // Entries without a recording predate it: rebuild once, then recorded.
-  const recorded = entry.agentVersions ?? null;
-  const drifted = resolved.filter((item) => item.latest !== recorded?.[item.key]);
-  if (drifted.length === 0) {
+      // Nothing to do when the image already recorded these exact versions.
+      // Entries without a recording predate it: rebuild once, then recorded.
+      // An explicitly named engine whose latest cannot be resolved still
+      // rebuilds bare latest-first rather than reporting current.
+      const recorded = entry.agentVersions ?? null;
+      const drifted = resolved.filter((item) => item.latest !== recorded?.[item.key]);
+      const unresolved = names.filter((name) => !resolved.some((item) => item.def.name === name));
+      if (drifted.length === 0 && (target === 'all' || unresolved.length === 0)) {
     deps.stdout('every agent is already at its latest version; nothing to build\n');
     return 0;
   }

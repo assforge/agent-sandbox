@@ -22,7 +22,10 @@ describe('parseArgs', () => {
 
   it('parses agent shortcuts with names and forwarding', () => {
     expect(SUPPORTED_AGENTS).toContain('claude');
+    expect(SUPPORTED_AGENTS).toContain('grok');
+    expect(SUPPORTED_AGENTS).toContain('agy');
     expect(parseArgs(['claude'])).toEqual({ kind: 'agent', agent: 'claude', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
+    expect(parseArgs(['grok'])).toEqual({ kind: 'agent', agent: 'grok', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
     expect(parseArgs(['codex', '--name', 'sdk', '--', '-c', 'x'])).toEqual({
       kind: 'agent',
       agent: 'codex',

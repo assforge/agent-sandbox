@@ -126,7 +126,7 @@ AgentEngine     name, statePaths, launch, installSpec(), latestVersion()
   statePaths    home-relative dirs this agent owns (fork seeds, see §5)
   launch        argv vector, never a shell string
 
-built-in catalog — five entries, held as data. Versions are floors, not
+built-in catalog — seven entries, held as data. Versions are floors, not
 pins: the image installs whatever the channels currently serve
 (latest-first), and the build gate demands every binary report at or
 above its floor. The resolved set is printed as the build receipt and
@@ -141,12 +141,19 @@ compares the running container against.
                                           .copilot, .config/github-copilot
   pi        npm     @earendil-works/pi-coding-agent>=0.85.1
                                           .pi/agent
+  grok      native  script>=1.0.34, latest read from
+            https://x.ai/cli/stable      .grok
+  agy       native  script, latest-only, no version selection
+                                          .gemini
 
-  grok, agy  named, never constructed: no verified linux install
-             channel (the host binaries are darwin-only)
+  grok, agy  supported since 0.26.0; kiro stays out (latest-only
+             script plus social-login-only auth does not fit containers)
+
 ```
 
-`claude` is the only native channel — the vendor installer under
+`claude` was the first native channel; grok and agy joined it. A native
+
+`claude` was the first native channel — the vendor installer under
 `/opt/claude` — and it carries a floor like any other agent. A native
 engine reads its `latestEndpoint` for the latest release and returns
 null rather than guessing when the feed is unreadable or malformed; npm
@@ -158,10 +165,11 @@ User catalogs are data too: `~/.agent.sandbox/engines/*.json`, read in
 filename order, and an invalid file fails closed naming its path.
 Built-ins win a name conflict, so no catalog can redefine `claude`.
 
-`grok` and `agy` are refused in **two** places on purpose — at catalog
-load as well as at lookup. A catalog that declares one registers it
-under its own name, so the lookup would *succeed* and the lookup guard
-would never run; the load-boundary check is what closes that path.
+Names with no verified install channel are refused in **two** places on
+purpose — at catalog load as well as at lookup. A catalog that declares
+one registers it under its own name, so the lookup would *succeed* and
+the lookup guard would never run; the load-boundary check is what closes
+that path. The list is empty today; the guard stays for future names.
 
 **TerminalEngine — where windows live**
 
@@ -266,6 +274,14 @@ image (built from templates/Dockerfile, no secrets)
   /opt/claude              claude via the vendor installer (latest unless
                            CLAUDE_VERSION overrides), agent-owned;
                            PATH gains /opt/claude/.local/bin
+  /opt/grok                grok via its installer (GROK_VERSION overrides),
+                           agent-owned; binary at /opt/grok/bin/grok with
+                           a 130MB downloads cache alongside (runtime
+                           symlinks into it, so it stays); PATH gains
+                           /opt/grok/bin
+  /opt/agy                 agy via its installer (latest-only), agent-owned;
+                           single 213MB binary at /opt/agy/bin/agy;
+                           PATH gains /opt/agy/bin
   agent user               uid 1001 (pinned); USER agent for the workload
   workdir                  /home/agent/work
   entrypoint               /usr/local/bin/sandbox-entrypoint.sh
@@ -282,6 +298,7 @@ container (per workspace, --cap-drop ALL, user agent)
 
 `sandbox-entrypoint.sh` is where a home's shape is decided: it deletes any
 stale `ready.json`, creates `.claude`, `.codex`, `.copilot`, `.pi`,
+`.grok`, `.gemini`,
 `.config/opencode`, `.config/github-copilot`, `work`, and `instances`
 under `$HOME`, and only then writes the token and `exec`s the command. It
 refuses to run without `SANDBOX_GENERATION` and
@@ -336,6 +353,9 @@ never launches an agent.
   .codex/                      codex state
   .copilot/                    copilot state
   .pi/                         pi state
+  .grok/                       grok state (includes a downloads cache;
+                               fork copies it whole)
+  .gemini/                     agy state
   .config/opencode/            opencode state
   .config/github-copilot/      copilot state
   work/                        the image's WORKDIR
@@ -356,8 +376,8 @@ Per-instance HOME modes, recorded on the roster entry at birth:
 shared   HOME=/home/agent. Default, including old entries without
          a recorded mode. Full continuity; do not run concurrent
          writers against the same files.
-fork     On first launch, for each of .claude, .codex, .copilot, .pi and
-         .config: if the instance does not have that directory yet,
+fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok,
+         .gemini and .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.
          A failed copy is swallowed, so a fork can launch with an
@@ -367,7 +387,7 @@ fresh    Empty room. Nothing is copied, nothing is shared.
 ```
 
 The copy is unfiltered. A comment in `lifecycle.ts` calls the fork list
-"caches excluded", and no code excludes them: everything under those five
+"caches excluded", and no code excludes them: everything under those seven
 directories is copied. Read that comment as intent, not as behaviour.
 
 Secrets stay orthogonal: credential files live host-side and inject as
@@ -380,7 +400,7 @@ removes orphan fork directories (credential files never).
 ```
 overrides (upgrade flows, emergencies) --> build args <AGENT>_VERSION
   --> build (docker or apple)
-  --> inspect: the five CLI versions must clear their catalog floors;
+  --> inspect: the seven CLI versions must clear their catalog floors;
       the resolved set is the build receipt
   --> verify: the entrypoint is executable, and -- on the `image build`
       path only -- a throwaway run wrote a ready.json carrying the

@@ -8,6 +8,7 @@ ARG CODEX_VERSION
 ARG COPILOT_VERSION
 ARG PI_VERSION
 ARG CLAUDE_VERSION
+ARG GROK_VERSION
 
 FROM node:22-bookworm-slim
 
@@ -16,6 +17,7 @@ ARG CODEX_VERSION
 ARG COPILOT_VERSION
 ARG PI_VERSION
 ARG CLAUDE_VERSION
+ARG GROK_VERSION
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl \
@@ -36,13 +38,26 @@ RUN apt-get update \
 # (so root-owned caches land here); the whole tree is handed back below.
 ENV HOME=/home/agent
 RUN useradd -u 1001 -m -s /bin/bash agent \
-  && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi \
-    /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
+  && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi /home/agent/.grok \
+    /home/agent/.gemini /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
   && chown -R agent:agent /home/agent
 
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
 
+# Grok ships outside npm: installer script, version-addressable, API-key auth.
+# Installed under /opt/grok (outside the home volume). GROK_BIN_DIR must be
+# exported in the same shell (a VAR=val prefix on `curl | bash` only reaches
+# curl, not the installer); the downloads cache stays because BIN_DIR links
+# into it. agy has no version selection, so it always tracks latest and
+# takes no build arg.
+RUN mkdir -p /opt/grok && export HOME=/opt/grok GROK_BIN_DIR=/opt/grok/bin \
+  && if [ -n "${GROK_VERSION}" ]; then curl -fsSL https://x.ai/cli/install.sh | bash -s -- "${GROK_VERSION}"; else curl -fsSL https://x.ai/cli/install.sh | bash; fi \
+  && rm -rf /opt/grok/.bashrc /opt/grok/.cache \
+  && chown -R agent:agent /opt/grok \
+  && mkdir -p /opt/agy/bin && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /opt/agy/bin \
+  && chown -R agent:agent /opt/agy
+ENV PATH="/opt/grok/bin:/opt/agy/bin:${PATH}"
 # Claude ships outside npm and must live outside the home volume: the
 # volume is mounted over /home/agent at runtime and would mask anything
 # baked in there. The installer lays everything under $HOME, so point it
