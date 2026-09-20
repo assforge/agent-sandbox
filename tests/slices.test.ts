@@ -314,6 +314,12 @@ describe('image lifecycle', () => {
     expect(versions).toMatchObject({ claude: '2.1.276', '@openai/codex': '0.155.1' });
     expect(versions).not.toHaveProperty('kiro');
     expect(versions).not.toHaveProperty('frobnicate');
+    // A duplicated allowed key keeps the first report.
+    const duped = parseInspectedVersions(
+      'claude=2.1.276\nclaude=9.9.9\n',
+      engineProbeKeys(agentEngines().values()),
+    );
+    expect(duped['claude']).toBe('2.1.276');
   });
 
   it('strips an optional cursor-agent prefix before the calver', () => {
