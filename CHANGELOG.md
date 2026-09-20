@@ -1,5 +1,15 @@
 # @assforge/cogent-sandbox
 
+## 0.29.0
+
+### Minor Changes
+
+- 5333f34: Keyed version probe: every binary reports as key=value so missing,
+  extra, or multi-line outputs can never misattribute versions; unknown
+  keys are dropped against the engine set. Upgrade reports unresolvable
+  latest versions honestly instead of claiming current, and rebuilds
+  when the recording predates an engine.
+
 ## 0.28.1
 
 ### Patch Changes
