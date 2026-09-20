@@ -7,6 +7,10 @@ ARG OPENCODE_VERSION
 ARG CODEX_VERSION
 ARG COPILOT_VERSION
 ARG PI_VERSION
+ARG QWEN_VERSION
+ARG KIMI_VERSION
+ARG MIMO_VERSION
+ARG AUGGIE_VERSION
 ARG CLAUDE_VERSION
 ARG GROK_VERSION
 
@@ -16,6 +20,10 @@ ARG OPENCODE_VERSION
 ARG CODEX_VERSION
 ARG COPILOT_VERSION
 ARG PI_VERSION
+ARG QWEN_VERSION
+ARG KIMI_VERSION
+ARG MIMO_VERSION
+ARG AUGGIE_VERSION
 ARG CLAUDE_VERSION
 ARG GROK_VERSION
 
@@ -27,6 +35,10 @@ RUN apt-get update \
     "@openai/codex${CODEX_VERSION:+@$CODEX_VERSION}" \
     "@github/copilot${COPILOT_VERSION:+@$COPILOT_VERSION}" \
     "@earendil-works/pi-coding-agent${PI_VERSION:+@$PI_VERSION}" \
+    "@qwen-code/qwen-code${QWEN_VERSION:+@$QWEN_VERSION}" \
+    "@moonshot-ai/kimi-code${KIMI_VERSION:+@$KIMI_VERSION}" \
+    "@mimo-ai/cli${MIMO_VERSION:+@$MIMO_VERSION}" \
+    "@augmentcode/auggie${AUGGIE_VERSION:+@$AUGGIE_VERSION}" \
   && npm cache clean --force
 
 # Non-root agent user for everything inside the workspace container.
@@ -39,7 +51,8 @@ RUN apt-get update \
 ENV HOME=/home/agent
 RUN useradd -u 1001 -m -s /bin/bash agent \
   && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi /home/agent/.grok \
-    /home/agent/.gemini /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
+    /home/agent/.gemini /home/agent/.qwen /home/agent/.kimi /home/agent/.mimo /home/agent/.auggie \
+    /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
   && chown -R agent:agent /home/agent
 
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh

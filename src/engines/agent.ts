@@ -76,7 +76,7 @@ export interface AgentCatalogEntry {
   latestEndpoint: string | null;
 }
 
-/** Built-in catalog: the five verified agents, as data. */
+/** Built-in catalog: the eleven verified agents, as data. */
 export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'claude', statePaths: ['.claude'], launch: ['claude'], npmPackage: null, minimumVersion: '2.1.276', latestEndpoint: 'https://downloads.claude.ai/claude-code-releases/latest' },
   { name: 'opencode', statePaths: ['.config/opencode'], launch: ['opencode'], npmPackage: 'opencode-ai', minimumVersion: '1.18.31', latestEndpoint: null },
@@ -85,6 +85,10 @@ export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'pi', statePaths: ['.pi/agent'], launch: ['pi'], npmPackage: '@earendil-works/pi-coding-agent', minimumVersion: '0.85.1', latestEndpoint: null },
   { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, minimumVersion: '1.0.34', latestEndpoint: 'https://x.ai/cli/stable' },
   { name: 'agy', statePaths: ['.gemini'], launch: ['agy'], npmPackage: null, minimumVersion: '1.2.7', latestEndpoint: null },
+  { name: 'qwen', statePaths: ['.qwen'], launch: ['qwen'], npmPackage: '@qwen-code/qwen-code', minimumVersion: '0.24.1', latestEndpoint: null },
+  { name: 'kimi', statePaths: ['.kimi'], launch: ['kimi'], npmPackage: '@moonshot-ai/kimi-code', minimumVersion: '2.0.2', latestEndpoint: null },
+  { name: 'mimo', statePaths: ['.mimo'], launch: ['mimo'], npmPackage: '@mimo-ai/cli', minimumVersion: '0.1.14', latestEndpoint: null },
+  { name: 'auggie', statePaths: ['.auggie'], launch: ['auggie'], npmPackage: '@augmentcode/auggie', minimumVersion: '0.36.0', latestEndpoint: null },
 ];
 
 /** Agents with no verified install channel. Named here, never constructed. Empty today; the guard stays for future names. */

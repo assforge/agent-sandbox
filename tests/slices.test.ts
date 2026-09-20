@@ -25,6 +25,11 @@ describe('agents', () => {
     expect(agentEngine(engines, 'grok').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '1.0.34' });
     expect(agentEngine(engines, 'grok').launch).toEqual(['grok']);
     expect(agentEngine(engines, 'agy').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '1.2.7' });
+    expect(agentEngine(engines, 'qwen').installSpec()).toMatchObject({ npmPackage: '@qwen-code/qwen-code', minimumVersion: '0.24.1' });
+    expect(agentEngine(engines, 'kimi').installSpec()).toMatchObject({ npmPackage: '@moonshot-ai/kimi-code', minimumVersion: '2.0.2' });
+    expect(agentEngine(engines, 'mimo').installSpec()).toMatchObject({ npmPackage: '@mimo-ai/cli', minimumVersion: '0.1.14' });
+    expect(agentEngine(engines, 'auggie').installSpec()).toMatchObject({ npmPackage: '@augmentcode/auggie', minimumVersion: '0.36.0' });
+    expect(agentEngine(engines, 'qwen').launch).toEqual(['qwen']);
     expect(agentEngine(engines, 'agy').launch).toEqual(['agy']);
     expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
   });
@@ -35,12 +40,16 @@ describe('agents', () => {
       latestVersion: () => '9.9.9',
       fetchText: () => '9.9.9',
     }, engines.values());
-    expect(entries).toHaveLength(7);
+    expect(entries).toHaveLength(11);
     expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, minimum: '2.1.276', latest: '9.9.9' });
     expect(entries[1]).toMatchObject({ agent: 'opencode', minimum: '1.18.31' });
     expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', minimum: '0.85.1' });
     expect(entries[5]).toMatchObject({ agent: 'grok', npmPackage: null, minimum: '1.0.34', latest: '9.9.9' });
     expect(entries[6]).toMatchObject({ agent: 'agy', npmPackage: null, installed: null, minimum: '1.2.7', latest: null });
+    expect(entries[7]).toMatchObject({ agent: 'qwen', npmPackage: '@qwen-code/qwen-code', minimum: '0.24.1' });
+    expect(entries[8]).toMatchObject({ agent: 'kimi', npmPackage: '@moonshot-ai/kimi-code', minimum: '2.0.2' });
+    expect(entries[9]).toMatchObject({ agent: 'mimo', npmPackage: '@mimo-ai/cli', minimum: '0.1.14' });
+    expect(entries[10]).toMatchObject({ agent: 'auggie', npmPackage: '@augmentcode/auggie', minimum: '0.36.0' });
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
     // A feed that gains a suffix still resolves to the leading version.
@@ -135,6 +144,10 @@ describe('image lifecycle', () => {
       '@earendil-works/pi-coding-agent': '0.85.1',
       grok: '9.9.9',
       agy: '1.2.7',
+      '@qwen-code/qwen-code': '0.24.1',
+      '@moonshot-ai/kimi-code': '2.0.2',
+      '@mimo-ai/cli': '0.1.14',
+      '@augmentcode/auggie': '0.36.0',
     };
     const result = buildCandidate(
       {
@@ -184,6 +197,10 @@ describe('image lifecycle', () => {
           '@earendil-works/pi-coding-agent': '0.85.1',
           grok: '1.0.34',
           agy: '1.2.7',
+          '@qwen-code/qwen-code': '0.24.1',
+          '@moonshot-ai/kimi-code': '2.0.2',
+          '@mimo-ai/cli': '0.1.14',
+          '@augmentcode/auggie': '0.36.0',
         }),
         verifyCandidate: () => true,
       },
@@ -220,6 +237,10 @@ describe('image lifecycle', () => {
             '@earendil-works/pi-coding-agent': '0.85.1',
             grok: '1.0.34',
             agy: '1.2.7',
+            '@qwen-code/qwen-code': '0.24.1',
+            '@moonshot-ai/kimi-code': '2.0.2',
+            '@mimo-ai/cli': '0.1.14',
+            '@augmentcode/auggie': '0.36.0',
           }),
           verifyCandidate: () => false,
         },
@@ -230,11 +251,11 @@ describe('image lifecycle', () => {
     ).toThrow(/failed verification/);
   });
 
-  it('parses the seven-engine probe past the copilot update hint', () => {
+  it('parses the eleven-engine probe past the copilot update hint', () => {
     // copilot 1.0.86 appends a stdout hint after its version line; it must
     // not shift pi off position 5.
     const versions = parseInspectedVersions(
-      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\ngrok 1.0.34 (3736acbc8658) [stable]\n1.2.7\n',
+      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\ngrok 1.0.34 (3736acbc8658) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0 (commit 7c61e5bb)\n',
     );
     expect(versions).toMatchObject({
       claude: '2.1.276',
@@ -244,6 +265,10 @@ describe('image lifecycle', () => {
       '@earendil-works/pi-coding-agent': '0.85.1',
       grok: '1.0.34',
       agy: '1.2.7',
+      '@qwen-code/qwen-code': '0.24.1',
+      '@moonshot-ai/kimi-code': '2.0.2',
+      '@mimo-ai/cli': '0.1.14',
+      '@augmentcode/auggie': '0.36.0',
     });
   });
 
@@ -263,6 +288,10 @@ describe('image lifecycle', () => {
           '@earendil-works/pi-coding-agent': '0.85.1',
           grok: '1.0.34',
           agy: '1.2.7',
+          '@qwen-code/qwen-code': '0.24.1',
+          '@moonshot-ai/kimi-code': '2.0.2',
+          '@mimo-ai/cli': '0.1.14',
+          '@augmentcode/auggie': '0.36.0',
         }),
         verifyCandidate: () => true,
       },

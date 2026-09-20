@@ -102,7 +102,7 @@ CLI --> ensureReady: running container, fingerprint current
 CLI --> registry: [txn] roster += {rollout, claude, homeMode=fork};
                      forks += rollout when the mode is fork
 CLI --> container: mkdir -p /home/agent/instances/rollout (as agent)
-CLI --> container: seed .claude/.codex/.copilot/.pi/.grok/.gemini/.config (absent only)
+CLI --> container: seed .claude/.codex/.copilot/.pi/.grok/.gemini/.qwen/.kimi/.mimo/.auggie/.config (absent only)
 CLI --> tmux: new-window rollout (exec vector, env incl. HOME + secrets)
 CLI <-- lock: release
 CLI --> tmux: attach (or skip with --no-attach)
@@ -175,7 +175,7 @@ CLI --> candidate: test -x /usr/local/bin/sandbox-entrypoint.sh
 CLI --> user: candidate verified + build receipt; activate explicitly with image activate
 ```
 
-"Verified" on this path means the seven versions cleared their floors and the
+"Verified" on this path means the eleven versions cleared their floors and the
 entrypoint is executable — nothing more. It is the weaker of the two
 build paths: `image build` (§4c) runs the same checks and then reads a
 generation back out of a throwaway `ready.json`, which is what makes its
@@ -591,7 +591,7 @@ match.
 build:
   CLI --> runtime: build candidate (target workspace's runtime when
                    --workspace resolves, else the host default)
-  CLI --> candidate: inspect 7 CLI versions (must clear their floors)
+  CLI --> candidate: inspect 11 CLI versions (must clear their floors)
   CLI --> candidate: entrypoint + independent ready.json check
   CLI --> user: candidate verified; activate explicitly
   NOTE: no registry write. A build changes nothing that is in use.

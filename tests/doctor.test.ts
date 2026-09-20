@@ -59,6 +59,12 @@ describe('runDoctor', () => {
       '@openai/codex': '0.155.1',
       '@github/copilot': '1.0.86',
       '@earendil-works/pi-coding-agent': '0.85.1',
+      grok: '1.0.34',
+      agy: '1.2.7',
+      '@qwen-code/qwen-code': '0.24.1',
+      '@moonshot-ai/kimi-code': '2.0.2',
+      '@mimo-ai/cli': '0.1.14',
+      '@augmentcode/auggie': '0.36.0',
     };
     expect(driftChecks({})).toEqual([]);
     expect(driftChecks(clean, clean)).toEqual([]);
