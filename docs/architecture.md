@@ -126,7 +126,7 @@ AgentEngine     name, statePaths, launch, installSpec(), latestVersion()
   statePaths    home-relative dirs this agent owns (fork seeds, see §5)
   launch        argv vector, never a shell string
 
-built-in catalog — eleven entries, held as data. Versions are floors, not
+built-in catalog — fourteen entries, held as data. Versions are floors, not
 pins: the image installs whatever the channels currently serve
 (latest-first), and the build gate demands every binary report at or
 above its floor. The resolved set is printed as the build receipt and
@@ -156,12 +156,16 @@ compares the running container against.
                                           .augment (self-update disabled
                                           in-image via
                                           AUGMENT_DISABLE_AUTO_UPDATE)
+  cursor    native  script, latest-only; launch bakes in
+            --disable-auto-update         .cursor
+  devin     native  script, latest-only   .config/devin,
+                                          .local/share/devin (XDG)
+  kiro      native  script, latest-only   .kiro
 
-  grok, agy  supported since 0.26.0; DeepSeek has no official CLI
-             (its models already work through pi, opencode and aider);
-             Cursor stays out (calver versions, self-updates by default);
-             kiro stays out (latest-only script plus social-login-only
-             auth does not fit containers)
+  grok, agy  supported since 0.26.0; cursor, devin and kiro since
+             0.28.0. DeepSeek has no official CLI (its models already
+             work through pi, opencode and aider); aider and goose stay
+             out (python toolchain / unvetted installer).
 
 ```
 
@@ -376,6 +380,10 @@ never launches an agent.
   .config/mimocode/            mimo config
   .config/mimocode/            mimo config
   .local/share/mimocode/       mimo auth and sessions
+  .cursor/                     cursor state
+  .config/devin/               devin config
+  .local/share/devin/          devin auth and sessions
+  .kiro/                       kiro shared config
   .augment/                    auggie state
   .config/opencode/            opencode state
   .config/github-copilot/      copilot state
@@ -398,7 +406,8 @@ shared   HOME=/home/agent. Default, including old entries without
          a recorded mode. Full continuity; do not run concurrent
          writers against the same files.
 fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok, .gemini,
-         .qwen, .kimi-code, .local/share/mimocode, .augment
+         .qwen, .kimi-code, .local/share/mimocode, .augment, .cursor,
+         .config/devin, .local/share/devin, .kiro
          and .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.
@@ -409,8 +418,10 @@ fresh    Empty room. Nothing is copied, nothing is shared.
 ```
 
 The copy is unfiltered. A comment in `lifecycle.ts` calls the fork list
-"caches excluded", and no code excludes them: everything under those eleven
-directories is copied. Read that comment as intent, not as behaviour.
+"caches excluded", and no code excludes them: everything under those
+fifteen directories is copied (fourteen engines; `.config/devin` rides
+alongside the `.config` whole-tree entry). Read that comment as intent,
+not as behaviour.
 
 Secrets stay orthogonal: credential files live host-side and inject as
 process environment regardless of home mode. Closing an instance drops
@@ -422,7 +433,7 @@ removes orphan fork directories (credential files never).
 ```
 overrides (upgrade flows, emergencies) --> build args <AGENT>_VERSION
   --> build (docker or apple)
-  --> inspect: the eleven CLI versions must clear their catalog floors;
+  --> inspect: the fourteen CLI versions must clear their catalog floors;
       the resolved set is the build receipt
   --> verify: the entrypoint is executable, and -- on the `image build`
       path only -- a throwaway run wrote a ready.json carrying the

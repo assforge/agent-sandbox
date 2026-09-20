@@ -65,6 +65,9 @@ describe('runDoctor', () => {
       '@moonshot-ai/kimi-code': '2.0.2',
       '@mimo-ai/cli': '0.1.14',
       '@augmentcode/auggie': '0.36.0',
+      cursor: '2026.09.18',
+      devin: '3000.10.31',
+      kiro: '2.22.1',
     };
     expect(driftChecks({})).toEqual([]);
     expect(driftChecks(clean, clean)).toEqual([]);

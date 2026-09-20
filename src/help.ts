@@ -35,7 +35,7 @@ Options:
   -h, --help               Show help. --version, -V show the version.
 
 Commands:
-  agent        Open agent windows (claude, opencode, codex, copilot, pi, grok, agy, qwen, kimi, mimo, auggie)
+  agent        Open agent windows (claude, opencode, codex, copilot, pi, grok, agy, qwen, kimi, mimo, auggie, cursor, devin, kiro)
   shell        Open a shell window in this workspace
   link         Link a workspace root into management
   unlink       Unlink a workspace root, keep all data

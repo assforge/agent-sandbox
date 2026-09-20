@@ -26,10 +26,10 @@ describe('engine registries', () => {
 
   it('adds another agent through catalog data alone (AC-4)', () => {
     const document = JSON.parse(
-      '[{"name":"kiro","statePaths":[".kiro"],"launch":["kiro"],"npmPackage":null,"minimumVersion":"9.9.9"}]',
+      '[{"name":"nova","statePaths":[".nova"],"launch":["nova"],"npmPackage":null,"minimumVersion":"9.9.9"}]',
     ) as unknown;
     const extended = agentEngines(loadAgentCatalog(document));
-    expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
+    expect(agentEngine(extended, 'nova').launch).toEqual(['nova']);
     expect(extended.size).toBe(BUILTIN_CATALOG.length + 1);
   });
 

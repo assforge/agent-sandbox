@@ -28,7 +28,7 @@ ARG CLAUDE_VERSION
 ARG GROK_VERSION
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl \
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl unzip \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g \
     "opencode-ai${OPENCODE_VERSION:+@$OPENCODE_VERSION}" \
@@ -52,6 +52,7 @@ ENV HOME=/home/agent
 RUN useradd -u 1001 -m -s /bin/bash agent \
   && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi /home/agent/.grok \
     /home/agent/.gemini /home/agent/.qwen /home/agent/.kimi-code /home/agent/.augment /home/agent/.local/share/mimocode \
+    /home/agent/.cursor /home/agent/.config/devin /home/agent/.local/share/devin /home/agent/.kiro \
     /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/.config/mimocode /home/agent/work \
   && chown -R agent:agent /home/agent
 
@@ -74,6 +75,21 @@ ENV PATH="/opt/grok/bin:/opt/agy/bin:${PATH}"
 # Auggie self-updates by default, which would move binaries under a recorded
 # image and manufacture drift. Versions change only at build in this model.
 ENV AUGMENT_DISABLE_AUTO_UPDATE=true
+# Cursor, Devin and Kiro are latest-only scripts into HOME-scoped dirs.
+# Cursor self-updates unless launched with --disable-auto-update (baked into
+# its launch vector); kiro installs kiro-cli, kiro-cli-chat and kiro-cli-term.
+# Devin's installer ends by running `devin setup`, which fails headless, so
+# that step's verdict is the binary's existence, not the script's exit code.
+RUN mkdir -p /opt/cursor && export HOME=/opt/cursor \
+  && curl -fsSL https://cursor.com/install | bash \
+  && chown -R agent:agent /opt/cursor \
+  && mkdir -p /opt/devin && export HOME=/opt/devin \
+  && curl -fsSL https://cli.devin.ai/install.sh | bash; test -x /opt/devin/.local/bin/devin \
+  && chown -R agent:agent /opt/devin \
+  && mkdir -p /opt/kiro && export HOME=/opt/kiro \
+  && curl -fsSL https://cli.kiro.dev/install | bash -s -- --force \
+  && chown -R agent:agent /opt/kiro
+ENV PATH="/opt/cursor/.local/bin:/opt/devin/.local/bin:/opt/kiro/.local/bin:${PATH}"
 # Claude ships outside npm and must live outside the home volume: the
 # volume is mounted over /home/agent at runtime and would mask anything
 # baked in there. The installer lays everything under $HOME, so point it

@@ -168,7 +168,7 @@ class FakeWorld {
         const arg = (name: string, fallback: string): string => this.lastBuildArgs[name] ?? fallback;
         return {
           status: 0,
-          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.155.1')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n${arg('PI_VERSION', '0.85.1')}\ngrok ${arg('GROK_VERSION', '1.0.34')} (abc) [stable]\n${arg('AGY_VERSION', '1.2.7')}\n${arg('QWEN_VERSION', '0.24.1')}\n${arg('KIMI_VERSION', '2.0.2')}\n${arg('MIMO_VERSION', '0.1.14')}\n${arg('AUGGIE_VERSION', '0.36.0')}\n`,
+          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.155.1')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n${arg('PI_VERSION', '0.85.1')}\ngrok ${arg('GROK_VERSION', '1.0.34')} (abc) [stable]\n${arg('AGY_VERSION', '1.2.7')}\n${arg('QWEN_VERSION', '0.24.1')}\n${arg('KIMI_VERSION', '2.0.2')}\n${arg('MIMO_VERSION', '0.1.14')}\n${arg('AUGGIE_VERSION', '0.36.0')}\n2026.09.18-9a7762b\ndevin 3000.10.31 (b98cc431)\nkiro-cli 2.22.1\n`,
           stderr: '',
         };
       }
@@ -211,7 +211,7 @@ class FakeWorld {
     if (verb === 'exec' && rest.some((arg) => typeof arg === 'string' && arg.includes('claude --version'))) {
       return {
         status: 0,
-        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (abc) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0\n',
+        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (abc) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0\n2026.09.18-9a7762b\ndevin 3000.10.31 (b98cc431)\nkiro-cli 2.22.1\n',
         stderr: '',
       };
     }
@@ -543,7 +543,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).not.toContain('agent-drift');
-      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (abc) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0\n';
+      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (abc) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0\n2026.09.18-9a7762b\ndevin 3000.10.31 (b98cc431)\nkiro-cli 2.22.1\n';
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('agent-drift-codex');
       expect(out.join('')).toContain('sandbox workspace upgrade');

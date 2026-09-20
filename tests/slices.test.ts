@@ -31,6 +31,11 @@ describe('agents', () => {
     expect(agentEngine(engines, 'kimi').installSpec()).toMatchObject({ npmPackage: '@moonshot-ai/kimi-code', minimumVersion: '2.0.2' });
     expect(agentEngine(engines, 'mimo').installSpec()).toMatchObject({ npmPackage: '@mimo-ai/cli', minimumVersion: '0.1.14' });
     expect(agentEngine(engines, 'auggie').installSpec()).toMatchObject({ npmPackage: '@augmentcode/auggie', minimumVersion: '0.36.0' });
+    expect(agentEngine(engines, 'cursor').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '2026.09.10' });
+    expect(agentEngine(engines, 'cursor').launch).toEqual(['cursor-agent', '--disable-auto-update']);
+    expect(agentEngine(engines, 'devin').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '3000.10.31' });
+    expect(agentEngine(engines, 'kiro').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '2.22.1' });
+    expect(agentEngine(engines, 'kiro').launch).toEqual(['kiro-cli']);
     expect(agentEngine(engines, 'qwen').launch).toEqual(['qwen']);
     expect(agentEngine(engines, 'agy').launch).toEqual(['agy']);
     expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
@@ -42,7 +47,7 @@ describe('agents', () => {
       latestVersion: () => '9.9.9',
       fetchText: () => '9.9.9',
     }, engines.values());
-    expect(entries).toHaveLength(11);
+    expect(entries).toHaveLength(14);
     expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, minimum: '2.1.276', latest: '9.9.9' });
     expect(entries[1]).toMatchObject({ agent: 'opencode', minimum: '1.18.31' });
     expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', minimum: '0.85.1' });
@@ -52,6 +57,9 @@ describe('agents', () => {
     expect(entries[8]).toMatchObject({ agent: 'kimi', npmPackage: '@moonshot-ai/kimi-code', minimum: '2.0.2' });
     expect(entries[9]).toMatchObject({ agent: 'mimo', npmPackage: '@mimo-ai/cli', minimum: '0.1.14' });
     expect(entries[10]).toMatchObject({ agent: 'auggie', npmPackage: '@augmentcode/auggie', minimum: '0.36.0' });
+    expect(entries[11]).toMatchObject({ agent: 'cursor', npmPackage: null, minimum: '2026.09.10', latest: null });
+    expect(entries[12]).toMatchObject({ agent: 'devin', npmPackage: null, minimum: '3000.10.31', latest: null });
+    expect(entries[13]).toMatchObject({ agent: 'kiro', npmPackage: null, minimum: '2.22.1', latest: null });
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
     // A feed that gains a suffix still resolves to the leading version.
@@ -62,9 +70,9 @@ describe('agents', () => {
     expect(suffixed.find((entry) => entry.agent === 'grok')?.latest).toBe('1.0.34');
   });
 
-  it('adds an eighth agent through data alone', () => {
-    const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, minimumVersion: '9.9.9', latestEndpoint: null }]);
-    expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
+  it('adds another agent through data alone', () => {
+    const extended = agentEngines([{ name: 'nova', statePaths: ['.nova'], launch: ['nova'], npmPackage: null, minimumVersion: '9.9.9', latestEndpoint: null }]);
+    expect(agentEngine(extended, 'nova').launch).toEqual(['nova']);
     expect(agentEngine(extended, 'codex').installSpec().minimumVersion).toBe('0.155.1');
   });
 
@@ -85,9 +93,9 @@ describe('agents', () => {
     expect(loadAgentCatalog([grok])).toHaveLength(1);
     expect(loadAgentCatalog([{ ...grok, name: 'agy' }])).toHaveLength(1);
     // A supported extra agent is still accepted.
-    expect(loadAgentCatalog([{ ...grok, name: 'kiro' }])).toHaveLength(1);
+    expect(loadAgentCatalog([{ ...grok, name: 'nova' }])).toHaveLength(1);
     // Unknown names still fail closed at lookup.
-    expect(() => agentEngine(engines, 'cursor')).toThrow(/unknown agent/);
+    expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
   });
 });
 
@@ -161,6 +169,9 @@ describe('image lifecycle', () => {
       '@moonshot-ai/kimi-code': '2.0.2',
       '@mimo-ai/cli': '0.1.14',
       '@augmentcode/auggie': '0.36.0',
+      cursor: '2026.09.18',
+      devin: '3000.10.31',
+      kiro: '2.22.1',
     };
     const result = buildCandidate(
       {
@@ -214,6 +225,9 @@ describe('image lifecycle', () => {
           '@moonshot-ai/kimi-code': '2.0.2',
           '@mimo-ai/cli': '0.1.14',
           '@augmentcode/auggie': '0.36.0',
+          cursor: '2026.09.18',
+          devin: '3000.10.31',
+          kiro: '2.22.1',
         }),
         verifyCandidate: () => true,
       },
@@ -254,6 +268,9 @@ describe('image lifecycle', () => {
             '@moonshot-ai/kimi-code': '2.0.2',
             '@mimo-ai/cli': '0.1.14',
             '@augmentcode/auggie': '0.36.0',
+            cursor: '2026.09.18',
+            devin: '3000.10.31',
+            kiro: '2.22.1',
           }),
           verifyCandidate: () => false,
         },
@@ -264,11 +281,11 @@ describe('image lifecycle', () => {
     ).toThrow(/failed verification/);
   });
 
-  it('parses the eleven-engine probe past the copilot update hint', () => {
+  it('parses the fourteen-engine probe past the copilot update hint', () => {
     // copilot 1.0.86 appends a stdout hint after its version line; it must
     // not shift pi off position 5.
     const versions = parseInspectedVersions(
-      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\ngrok 1.0.34 (3736acbc8658) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0 (commit 7c61e5bb)\n',
+      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\ngrok 1.0.34 (3736acbc8658) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0 (commit 7c61e5bb)\n2026.09.18-9a7762b\ndevin 3000.10.31 (b98cc431)\nkiro-cli 2.22.1\n',
     );
     expect(versions).toMatchObject({
       claude: '2.1.276',
@@ -282,6 +299,9 @@ describe('image lifecycle', () => {
       '@moonshot-ai/kimi-code': '2.0.2',
       '@mimo-ai/cli': '0.1.14',
       '@augmentcode/auggie': '0.36.0',
+      cursor: '2026.09.18',
+      devin: '3000.10.31',
+      kiro: '2.22.1',
     });
   });
 
@@ -305,6 +325,9 @@ describe('image lifecycle', () => {
           '@moonshot-ai/kimi-code': '2.0.2',
           '@mimo-ai/cli': '0.1.14',
           '@augmentcode/auggie': '0.36.0',
+          cursor: '2026.09.18',
+          devin: '3000.10.31',
+          kiro: '2.22.1',
         }),
         verifyCandidate: () => true,
       },
@@ -588,6 +611,9 @@ describe('help', () => {
       expect(top).toContain(token);
     }
     expect(agentHelp()).toContain('claude, opencode');
+    for (const name of SUPPORTED_AGENTS) {
+      expect(top).toContain(name);
+    }
     expect(workspaceHelp()).toContain('  attach       Reconnect to the terminal session');
     expect(imageHelp()).toContain('does not reverse a data migration');
     expect(describeAction('workspace', 'restart')).toContain('Usage: sandbox workspace restart');
