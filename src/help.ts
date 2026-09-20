@@ -227,7 +227,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     start: 'Usage: sandbox workspace start\n\nPrepare the environment without attaching.\n',
     stop: 'Usage: sandbox workspace stop\n\nAsk for confirmation when instances are live. Keeps volumes.\n',
     restart: 'Usage: sandbox workspace restart\n\nStop and bring the same image back. Asks for confirmation when instances are live.\n',
-    upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything is current, and otherwise build, activate, and recreate in one confirmed step.\n',
+    upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything recorded is current, and otherwise build, activate, and recreate in one confirmed step. Reports unresolvable versions instead of claiming current.\n',
     prune: 'Usage: sandbox workspace prune [--all] [--forks]\n\nRemove stopped containers of this workspace (or every registered workspace with --all) after one confirmation. --forks removes orphan fork state instead; credential files are never touched. Volumes, networks, images, and the registry are kept.\n',
     attach: 'Usage: sandbox workspace attach\n\nReconnect only; fails when the session is absent, warns when the container is stopped.\n',
     close: 'Usage: sandbox workspace close <instance>\n\nClose the instance window and forget the roster entry. Asks for confirmation when the window is still live; already-gone windows close without a prompt. Volumes, credentials, and fork state are kept; prune forks with: sandbox workspace prune --forks.\n',
@@ -244,7 +244,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
   agent: {
     list: 'Usage: sandbox agent list [--json, -j]\n\nList supported agents with their install channel and minimum version.\n',
     outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, minimum, and latest versions. claude and grok track vendor feeds, npm engines track npm, the rest report unknown.\n',
-    upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly.\n',
+    upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly. Reports unresolvable versions instead of claiming current.\n',
   },
   image: {
     list: 'Usage: sandbox image list [--json, -j]\n\nList local workspace images.\n',

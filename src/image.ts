@@ -24,12 +24,17 @@ export interface ImageRunner {
  * engine's version. Built from the engine set so user-catalog engines ride
  * the same probe.
  */
+/** Single-quote a shell word. Catalog-controlled strings interpolated below. */
+function shq(word: string): string {
+  return `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
 export function buildInspectScript(engines: Iterable<AgentEngine>): string {
   const parts: string[] = [];
   for (const engine of engines) {
     const key = engine.installSpec().npmPackage ?? engine.name;
     const binary = engine.launch[0] ?? engine.name;
-    parts.push(`echo "${key}=$(${binary} --version 2>/dev/null | head -n 1)"`);
+    parts.push(`echo ${shq(key)}="$(${shq(binary)} --version 2>/dev/null | head -n 1)"`);
   }
   return parts.join('; ');
 }
