@@ -1,11 +1,13 @@
-# Sandbox workspace image. Built without secrets; versions pinned via build args.
+# Sandbox workspace image. Built without secrets. Latest-first: agents
+# install at whatever the channels currently serve; a build arg pins one
+# only when the caller passes an override (upgrade flows, emergencies).
 # The host owns tmux windows and runs `docker exec` into this container,
 # so no tmux server runs inside the image.
-ARG OPENCODE_VERSION=1.18.31
-ARG CODEX_VERSION=0.155.1
-ARG COPILOT_VERSION=1.0.86
-ARG PI_VERSION=0.85.1
-ARG CLAUDE_VERSION=2.1.276
+ARG OPENCODE_VERSION
+ARG CODEX_VERSION
+ARG COPILOT_VERSION
+ARG PI_VERSION
+ARG CLAUDE_VERSION
 
 FROM node:22-bookworm-slim
 
@@ -19,10 +21,10 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g \
-    "opencode-ai@${OPENCODE_VERSION}" \
-    "@openai/codex@${CODEX_VERSION}" \
-    "@github/copilot@${COPILOT_VERSION}" \
-    "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+    "opencode-ai${OPENCODE_VERSION:+@$OPENCODE_VERSION}" \
+    "@openai/codex${CODEX_VERSION:+@$CODEX_VERSION}" \
+    "@github/copilot${COPILOT_VERSION:+@$COPILOT_VERSION}" \
+    "@earendil-works/pi-coding-agent${PI_VERSION:+@$PI_VERSION}" \
   && npm cache clean --force
 
 # Non-root agent user for everything inside the workspace container.
@@ -47,7 +49,7 @@ RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
 # at /opt/claude (agent-owned, refreshed on every build). Runs as root;
 # the trees are handed back below.
 RUN mkdir -p /opt/claude && export HOME=/opt/claude \
-  && curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
+  && if [ -n "${CLAUDE_VERSION}" ]; then curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}"; else curl -fsSL https://claude.ai/install.sh | bash; fi \
   && chown -R agent:agent /opt/claude \
   && chown -R agent:agent /home/agent
 ENV PATH="/opt/claude/.local/bin:${PATH}"

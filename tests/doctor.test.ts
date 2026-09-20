@@ -52,18 +52,30 @@ describe('runDoctor', () => {
     expect(dead.find((check) => check.id === 'workspace-windows')?.remediation).toMatch(/reopen/);
   });
 
-  it('warns when running agents drift from pinned versions and ignores the rest', () => {
+  it('warns on recorded mismatch, then on floor breach, and ignores the rest', () => {
+    const clean = {
+      claude: '2.1.276',
+      'opencode-ai': '1.18.31',
+      '@openai/codex': '0.155.1',
+      '@github/copilot': '1.0.86',
+      '@earendil-works/pi-coding-agent': '0.85.1',
+    };
     expect(driftChecks({})).toEqual([]);
-    expect(driftChecks({ claude: '2.1.276', 'opencode-ai': '1.18.31', '@openai/codex': '0.155.1', '@github/copilot': '1.0.86', '@earendil-works/pi-coding-agent': '0.85.1' })).toEqual([]);
-    const drifted = driftChecks({ claude: '2.1.276', '@openai/codex': '9.9.9', 'some-future-agent': '1.0.0' });
+    expect(driftChecks(clean, clean)).toEqual([]);
+    // No recording: only a floor breach warns.
+    expect(driftChecks(clean, null)).toEqual([]);
+    const drifted = driftChecks({ claude: '2.1.276', '@openai/codex': '9.9.9', 'some-future-agent': '1.0.0' }, clean);
     expect(drifted).toHaveLength(1);
-    expect(drifted[0]).toMatchObject({ id: 'agent-drift-codex', status: 'warn', remediation: 'Run: sandbox workspace upgrade' });
-    expect(drifted[0]?.summary).toMatch(/codex runs 9\.9\.9/);
-    const wired = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [], runningVersions: { claude: '9.9.9' } });
+    expect(drifted[0]).toMatchObject({ id: 'agent-drift-codex', status: 'warn', remediation: 'Run: sandbox workspace upgrade to rebuild, or re-activate the intended image' });
+    expect(drifted[0]?.summary).toMatch(/codex runs 9\.9\.9.*recorded 0\.155\.1/);
+    const ancient = driftChecks({ '@openai/codex': '0.1.0' }, null);
+    expect(ancient).toHaveLength(1);
+    expect(ancient[0]?.summary).toMatch(/below the supported minimum/);
+    const wired = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [], runningVersions: { claude: '9.9.9' }, recordedVersions: { claude: '2.1.276' } });
     expect(wired.find((check) => check.id === 'agent-drift-claude')?.status).toBe('warn');
     expect(doctorExitCode(wired)).toBe(0);
-    const clean = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
-    expect(clean.some((check) => check.id.startsWith('agent-drift'))).toBe(false);
+    const unrecorded = runDoctor(healthy, { image: 'sha256:abc', network: 'restricted', networkExists: true, deadWindows: [] });
+    expect(unrecorded.some((check) => check.id.startsWith('agent-drift'))).toBe(false);
   });
 
   it('collects hook and MCP server commands from project configs', () => {

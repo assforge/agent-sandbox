@@ -67,6 +67,8 @@ describe('workspaceId', () => {
         ['bad network', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], network: 'wide' } } }],
         ['bad forks', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], forks: [42] } } }],
         ['bad homeMode', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [{ name: 'w', kind: 'k', window: 'w', homeMode: 'mansion' }], mounts: [] } } }],
+        ['bad agentVersions', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], image: null, agentVersions: { claude: 42 } } } }],
+        ['agentVersions array', { version: 1, workspaces: { a: { id: 'a', root: '/w', container: 'c', session: 's', homeVolume: 'v', instances: [], mounts: [], image: null, agentVersions: [] } } }],
       ];
       for (const [label, document] of cases) {
         writeFileSync(path, JSON.stringify(document), 'utf8');

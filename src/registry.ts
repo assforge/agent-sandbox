@@ -61,6 +61,12 @@ export interface WorkspaceEntry {
   /** Fork names with state under instances/. Pruned only explicitly. */
   forks: string[];
   /**
+   * Agent versions recorded from the image at activation, keyed like the
+   * version probe. Absent on pre-feature entries: never backfilled, the
+   * drift check skips workspaces without it.
+   */
+  agentVersions?: Record<string, string>;
+  /**
    * Absent means no operation is outstanding. Deliberately never backfilled:
    * unlike the fields below, absence here carries meaning, so a default would
    * invent a claim rather than repair one.
@@ -191,6 +197,14 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
   }
   if (entry.network !== undefined && entry.network !== 'open' && entry.network !== 'restricted') {
     throw bad('network must be open or restricted');
+  }
+  if (entry.agentVersions !== undefined) {
+    if (typeof entry.agentVersions !== 'object' || entry.agentVersions === null || Array.isArray(entry.agentVersions)) {
+      throw bad('agentVersions must be a string map');
+    }
+    for (const [name, version] of Object.entries(entry.agentVersions)) {
+      if (typeof version !== 'string') throw bad(`agentVersions entry ${name} must be a string`);
+    }
   }
   if (entry.pendingOperation !== undefined) {
     // A claim is the only thing that freezes a workspace, so a malformed one must

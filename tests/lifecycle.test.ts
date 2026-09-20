@@ -314,13 +314,13 @@ class FakeWorld {
   private npm(args: string[]): RunResult {
     if (args[0] === 'ls') return { status: 0, stdout: JSON.stringify({ dependencies: {} }), stderr: '' };
     if (args[0] === 'view') {
-      const pinned: Record<string, string> = {
+      const floors: Record<string, string> = {
         'opencode-ai': '1.18.31',
         '@openai/codex': '0.155.1',
         '@github/copilot': '1.0.86',
         '@earendil-works/pi-coding-agent': '0.85.1',
       };
-      return { status: 0, stdout: `${pinned[args[1] as string] ?? '9.9.9'}\n`, stderr: '' };
+      return { status: 0, stdout: `${floors[args[1] as string] ?? '9.9.9'}\n`, stderr: '' };
     }
     return { status: 0, stdout: '', stderr: '' };
   }
@@ -458,7 +458,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['agent', 'upgrade', 'codex'], deps)).toBe(0);
       expect(out.join('')).toContain('Activate explicitly');
       expect(await main(['agent', 'upgrade', 'all'], deps)).toBe(0);
-      expect(out.join('')).toContain('claude: pinned 2.1.276, latest 2.1.277');
+      expect(out.join('')).toContain('claude: minimum 2.1.276, latest 2.1.277');
       expect(await main(['agent', 'upgrade', 'nope'], deps)).toBe(1);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -506,13 +506,13 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['codex', '--workspace', root, '--no-attach'], counting)).toBe(0);
       expect(await main(['workspace', 'upgrade', '--workspace', root], counting)).toBe(0);
       expect(confirms).toBe(1);
-      expect(out.join('')).toContain('claude: pinned 2.1.276, latest 2.1.277');
+      expect(out.join('')).toContain('claude: minimum 2.1.276, latest 2.1.277');
       const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       const upgraded = registry.workspaces[id]?.image ?? '';
       expect(upgraded.startsWith('sandbox-workspace:upgrade-')).toBe(true);
       expect(world.containers.get(`sandbox-${id}`)?.running).toBe(true);
-      world.curlText = '2.1.276\n';
+      world.curlText = '2.1.277\n';
       expect(await main(['workspace', 'upgrade', '--workspace', root], counting)).toBe(0);
       expect(out.join('')).toContain('already at its latest version');
       expect(confirms).toBe(1);

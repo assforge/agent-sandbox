@@ -1,4 +1,5 @@
 import { BUILTIN_CATALOG } from './engines/agent.js';
+import { versionAtLeast } from './image.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
 
@@ -44,6 +45,8 @@ export interface WorkspacePosture {
   unresolvedHookCommands?: string[] | null;
   /** Agent versions inside the running container. Null skips the drift check. */
   runningVersions?: Record<string, string> | null;
+  /** Agent versions recorded from the image at activation. Null skips recorded comparison. */
+  recordedVersions?: Record<string, string> | null;
   /**
    * The legacy home directory is still in place and the move has not run.
    * Read-only detection: doctor reports it, it never performs the move.
@@ -129,28 +132,43 @@ export function hookChecks(missing: string[]): DoctorCheck[] {
   ];
 }
 /**
- * Warn for running agent binaries that drifted from their pinned versions
- * (self-updaters move on their own). Unknown agents are ignored; the check
- * is local-only and never touches the network.
+ * Warn when the running container disagrees with what its image recorded
+ * at activation (something moved underneath: a self-updater, a hand edit).
+ * Without a recording, fall back to the catalog floor: running below the
+ * supported minimum warns. Unknown agents are ignored; the check is
+ * local-only and never touches the network.
  */
-export function driftChecks(running: Record<string, string>): DoctorCheck[] {
-  const pinned = new Map<string, { name: string; version: string }>();
+export function driftChecks(running: Record<string, string>, recorded: Record<string, string> | null = null): DoctorCheck[] {
+  const floors = new Map<string, { name: string; version: string }>();
   for (const entry of BUILTIN_CATALOG) {
-    if (!entry.pinnedVersion) continue;
-    pinned.set(entry.name, { name: entry.name, version: entry.pinnedVersion });
-    if (entry.npmPackage) pinned.set(entry.npmPackage, { name: entry.name, version: entry.pinnedVersion });
+    if (!entry.minimumVersion) continue;
+    floors.set(entry.name, { name: entry.name, version: entry.minimumVersion });
+    if (entry.npmPackage) floors.set(entry.npmPackage, { name: entry.name, version: entry.minimumVersion });
   }
   const checks: DoctorCheck[] = [];
   for (const [key, version] of Object.entries(running)) {
-    const want = pinned.get(key);
-    if (!want || version === want.version) continue;
-    checks.push({
-      id: `agent-drift-${want.name}`,
-      group: 'Workspace',
-      status: 'warn',
-      summary: `${want.name} runs ${version} but the pinned version is ${want.version}`,
-      remediation: 'Run: sandbox workspace upgrade',
-    });
+    const want = floors.get(key);
+    if (!want) continue;
+    const recordedVersion = recorded?.[key];
+    if (recordedVersion && version !== recordedVersion) {
+      checks.push({
+        id: `agent-drift-${want.name}`,
+        group: 'Workspace',
+        status: 'warn',
+        summary: `${want.name} runs ${version} but the image recorded ${recordedVersion}`,
+        remediation: 'Run: sandbox workspace upgrade to rebuild, or re-activate the intended image',
+      });
+      continue;
+    }
+    if (!recordedVersion && versionAtLeast(version, want.version) === false) {
+      checks.push({
+        id: `agent-drift-${want.name}`,
+        group: 'Workspace',
+        status: 'warn',
+        summary: `${want.name} runs ${version}, below the supported minimum ${want.version}`,
+        remediation: 'Run: sandbox workspace upgrade',
+      });
+    }
   }
   return checks;
 }
@@ -295,7 +313,7 @@ export function runDoctor(env: ProbeEnv, posture: WorkspacePosture): DoctorCheck
     });
   }
   if (posture.runningVersions) {
-    checks.push(...driftChecks(posture.runningVersions));
+    checks.push(...driftChecks(posture.runningVersions, posture.recordedVersions ?? null));
   }
   if (posture.unresolvedHookCommands) {
     checks.push(...hookChecks(posture.unresolvedHookCommands));

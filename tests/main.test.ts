@@ -136,6 +136,43 @@ describe('main', () => {
     }
   });
 
+  it('lists unreferenced workspace images alongside the registry', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
+    try {
+      const registry = emptyRegistry();
+      registry.workspaces['w'] = {
+        id: 'w', root: '/w', container: 'c', image: 'sandbox-workspace:keep', previousImage: null,
+        session: 's', instances: [], homeVolume: 'v', network: 'open',
+        runtime: 'docker', terminal: 'tmux', mounts: [], forks: [],
+      };
+      saveRegistry(join(home, '.agent.sandbox', 'registry.json'), registry);
+      const d = deps({
+        homeDir: home,
+        runner: {
+          run: (command, args) => {
+            if (command === 'docker' && args[0] === 'images') {
+              return { status: 0, stdout: 'sandbox-workspace:keep\nsandbox-workspace:stale\n', stderr: '' };
+            }
+            if (command === 'docker' && (args[0] === 'ps' || args[0] === 'volume')) {
+              return { status: 0, stdout: '', stderr: '' };
+            }
+            throw new Error(`unexpected call: ${command} ${args.join(' ')}`);
+          },
+        },
+      });
+      expect(await main(['image', 'list'], d)).toBe(0);
+      expect(d.out.join('')).toMatch(/unreferenced: sandbox-workspace:stale/);
+      const d2 = deps({
+        homeDir: home,
+        runner: { run: () => ({ status: 0, stdout: '', stderr: '' }) },
+      });
+      expect(await main(['image', 'list', '--json'], d2)).toBe(0);
+      expect(JSON.parse(d2.out.join('')) as unknown).toMatchObject({ unreferenced: [] });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed with exit 2 on a corrupt registry', async () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
     try {

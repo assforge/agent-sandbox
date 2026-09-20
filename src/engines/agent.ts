@@ -14,7 +14,7 @@ export type AgentInstallChannel = 'npm' | 'native';
 export interface AgentInstallSpec {
   channel: AgentInstallChannel;
   npmPackage: string | null;
-  pinnedVersion: string | null;
+  minimumVersion: string | null;
 }
 
 export interface AgentEngine {
@@ -36,7 +36,7 @@ export class NpmAgentEngine implements AgentEngine {
   ) {}
 
   installSpec(): AgentInstallSpec {
-    return { channel: 'npm', npmPackage: this.packageName, pinnedVersion: this.version };
+    return { channel: 'npm', npmPackage: this.packageName, minimumVersion: this.version };
   }
 
   latestVersion(runner: VersionRunner): string | null {
@@ -54,7 +54,7 @@ export class NativeAgentEngine implements AgentEngine {
   ) {}
 
   installSpec(): AgentInstallSpec {
-    return { channel: 'native', npmPackage: null, pinnedVersion: this.version };
+    return { channel: 'native', npmPackage: null, minimumVersion: this.version };
   }
 
   latestVersion(runner: VersionRunner): string | null {
@@ -69,17 +69,17 @@ export interface AgentCatalogEntry {
   statePaths: string[];
   launch: string[];
   npmPackage: string | null;
-  pinnedVersion: string | null;
+  minimumVersion: string | null;
   latestEndpoint: string | null;
 }
 
 /** Built-in catalog: the five verified agents, as data. */
 export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
-  { name: 'claude', statePaths: ['.claude'], launch: ['claude'], npmPackage: null, pinnedVersion: '2.1.276', latestEndpoint: 'https://downloads.claude.ai/claude-code-releases/latest' },
-  { name: 'opencode', statePaths: ['.config/opencode'], launch: ['opencode'], npmPackage: 'opencode-ai', pinnedVersion: '1.18.31', latestEndpoint: null },
-  { name: 'codex', statePaths: ['.codex'], launch: ['codex'], npmPackage: '@openai/codex', pinnedVersion: '0.155.1', latestEndpoint: null },
-  { name: 'copilot', statePaths: ['.copilot', '.config/github-copilot'], launch: ['copilot'], npmPackage: '@github/copilot', pinnedVersion: '1.0.86', latestEndpoint: null },
-  { name: 'pi', statePaths: ['.pi/agent'], launch: ['pi'], npmPackage: '@earendil-works/pi-coding-agent', pinnedVersion: '0.85.1', latestEndpoint: null },
+  { name: 'claude', statePaths: ['.claude'], launch: ['claude'], npmPackage: null, minimumVersion: '2.1.276', latestEndpoint: 'https://downloads.claude.ai/claude-code-releases/latest' },
+  { name: 'opencode', statePaths: ['.config/opencode'], launch: ['opencode'], npmPackage: 'opencode-ai', minimumVersion: '1.18.31', latestEndpoint: null },
+  { name: 'codex', statePaths: ['.codex'], launch: ['codex'], npmPackage: '@openai/codex', minimumVersion: '0.155.1', latestEndpoint: null },
+  { name: 'copilot', statePaths: ['.copilot', '.config/github-copilot'], launch: ['copilot'], npmPackage: '@github/copilot', minimumVersion: '1.0.86', latestEndpoint: null },
+  { name: 'pi', statePaths: ['.pi/agent'], launch: ['pi'], npmPackage: '@earendil-works/pi-coding-agent', minimumVersion: '0.85.1', latestEndpoint: null },
 ];
 
 /** Agents with no verified install channel. Named here, never constructed. */
@@ -92,7 +92,7 @@ function validateCatalogEntry(value: unknown): AgentCatalogEntry {
   const statePaths = record['statePaths'];
   const launch = record['launch'];
   const npmPackage = record['npmPackage'] ?? null;
-  const pinnedVersion = record['pinnedVersion'] ?? null;
+  const minimumVersion = record['minimumVersion'] ?? null;
   if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
     throw new Error(`agent catalog entry has an invalid name: ${String(name)}`);
   }
@@ -111,20 +111,20 @@ function validateCatalogEntry(value: unknown): AgentCatalogEntry {
   if (npmPackage !== null && typeof npmPackage !== 'string') {
     throw new Error(`agent catalog entry ${name} has an invalid npmPackage`);
   }
-  if (pinnedVersion !== null && typeof pinnedVersion !== 'string') {
-    throw new Error(`agent catalog entry ${name} has an invalid pinnedVersion`);
+  if (minimumVersion !== null && typeof minimumVersion !== 'string') {
+    throw new Error(`agent catalog entry ${name} has an invalid minimumVersion`);
   }
-  if ((npmPackage === null) !== (pinnedVersion === null) && npmPackage !== null) {
-    throw new Error(`agent catalog entry ${name} must set npmPackage and pinnedVersion together`);
+  if ((npmPackage === null) !== (minimumVersion === null) && npmPackage !== null) {
+    throw new Error(`agent catalog entry ${name} must set npmPackage and minimumVersion together`);
   }
-  if (npmPackage === null && pinnedVersion === null) {
-    throw new Error(`agent catalog entry ${name} needs a pinned version or an npm package`);
+  if (npmPackage === null && minimumVersion === null) {
+    throw new Error(`agent catalog entry ${name} needs a minimum version or an npm package`);
   }
   const latestEndpoint = record['latestEndpoint'] ?? null;
   if (latestEndpoint !== null && typeof latestEndpoint !== 'string') {
     throw new Error(`agent catalog entry ${name} has an invalid latestEndpoint`);
   }
-  return { name, statePaths, launch, npmPackage, pinnedVersion, latestEndpoint };
+  return { name, statePaths, launch, npmPackage, minimumVersion, latestEndpoint };
 }
 
 /** Load and validate an agent catalog document. Fails closed on any violation. */
@@ -134,10 +134,10 @@ export function loadAgentCatalog(document: unknown): AgentCatalogEntry[] {
 }
 
 function buildEngine(entry: AgentCatalogEntry): AgentEngine {
-  if (entry.npmPackage && entry.pinnedVersion) {
-    return new NpmAgentEngine(entry.name, entry.statePaths, entry.launch, entry.npmPackage, entry.pinnedVersion);
+  if (entry.npmPackage && entry.minimumVersion) {
+    return new NpmAgentEngine(entry.name, entry.statePaths, entry.launch, entry.npmPackage, entry.minimumVersion);
   }
-  return new NativeAgentEngine(entry.name, entry.statePaths, entry.launch, entry.pinnedVersion as string, entry.latestEndpoint);
+  return new NativeAgentEngine(entry.name, entry.statePaths, entry.launch, entry.minimumVersion as string, entry.latestEndpoint);
 }
 
 /** Engine registry: built-in catalog plus user-supplied entries. Built-ins win name conflicts. */
@@ -205,7 +205,7 @@ export interface OutdatedEntry {
   agent: string;
   npmPackage: string | null;
   installed: string | null;
-  pinned: string;
+  minimum: string;
   latest: string | null;
 }
 
@@ -213,12 +213,12 @@ export function outdatedEngines(runner: VersionRunner, engines: Iterable<AgentEn
   const entries: OutdatedEntry[] = [];
   for (const engine of engines) {
     const spec = engine.installSpec();
-    if (!spec.pinnedVersion) continue;
+    if (!spec.minimumVersion) continue;
     entries.push({
       agent: engine.name,
       npmPackage: spec.npmPackage,
       installed: spec.npmPackage ? runner.installedVersion(spec.npmPackage) : null,
-      pinned: spec.pinnedVersion,
+      minimum: spec.minimumVersion,
       latest: engine.latestVersion(runner),
     });
   }

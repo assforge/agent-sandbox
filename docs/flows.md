@@ -167,15 +167,15 @@ Resolution and build only. Running sessions are never touched.
 ```
 user --> CLI: sandbox agent upgrade all
 CLI --> npm/curl: latest per engine (npm view; claude release feed)
-CLI <-- user sees: pinned X, latest Y per engine (unknown -> keep pinned)
-CLI --> docker: build candidate (NAME_VERSION args, incl. CLAUDE_VERSION)
+CLI <-- user sees: minimum X, latest Y per engine (unknown -> keep minimum)
+CLI --> docker: build candidate (NAME_VERSION args only for overrides)
 CLI --> candidate: sh -c 'claude --version; opencode --version; ...'
-CLI <-- candidate: versions must equal overrides exactly, else throw
+CLI <-- candidate: versions must clear their floors, else throw
 CLI --> candidate: test -x /usr/local/bin/sandbox-entrypoint.sh
-CLI --> user: candidate verified; activate explicitly with image activate
+CLI --> user: candidate verified + build receipt; activate explicitly with image activate
 ```
 
-"Verified" on this path means the five versions matched and the
+"Verified" on this path means the five versions cleared their floors and the
 entrypoint is executable — nothing more. It is the weaker of the two
 build paths: `image build` (§4c) runs the same checks and then reads a
 generation back out of a throwaway `ready.json`, which is what makes its
@@ -185,18 +185,18 @@ report the same word.
 ## 4b. Workspace upgrade (`sandbox workspace upgrade [agent|all]`)
 
 Same resolution, then cutover in one confirmed step. When every
-latest equals its pin the command reports current and builds nothing.
+latest is already recorded on the entry the command reports current and builds nothing.
 
 ```
 user --> CLI: sandbox workspace upgrade
 CLI --> resolve latest (as in 4a)
-every latest == its pin --> CLI --> user: nothing to build, exit 0
+every latest == recorded --> CLI --> user: nothing to build, exit 0
 CLI --> user: [confirm] rebuild agents and recreate? (if instances live)
 CLI --> lock: acquire
 CLI --> docker: build + inspect + verify (as in 4a)
-CLI --> registry: [txn] activate (previous pointer saved)
+CLI --> registry: [txn] activate (previous pointer saved, versions recorded)
 CLI --> docker: stop, remove on image drift, create, probe ready
-CLI --> user: workspace <id> upgraded to <tag>
+CLI --> user: workspace <id> upgraded to <tag> + build receipt
 ```
 
 The pointer moves **before** the slow work, deliberately: it is the
@@ -488,8 +488,8 @@ workspace-network     Workspace          FAIL missing; otherwise reads the
                                          LIVE network, not the policy
 workspace-windows     Workspace          WARN per dead roster window
 agent-drift-<agent>   Workspace          WARN when the running binary
-                                         differs from its pin (local exec
-                                         probe, no network)
+                                         disagrees with the image recording
+                                         (or the catalog floor without one)
 workspace-hooks       Workspace          WARN per project hook/MCP command
                                          missing in the container (exec
                                          probe of command -v, no network)
@@ -591,7 +591,7 @@ match.
 build:
   CLI --> runtime: build candidate (target workspace's runtime when
                    --workspace resolves, else the host default)
-  CLI --> candidate: inspect 5 CLI versions (must match the pins exactly)
+  CLI --> candidate: inspect 5 CLI versions (must clear their floors)
   CLI --> candidate: entrypoint + independent ready.json check
   CLI --> user: candidate verified; activate explicitly
   NOTE: no registry write. A build changes nothing that is in use.
