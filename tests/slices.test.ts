@@ -305,6 +305,13 @@ describe('image lifecycle', () => {
     });
   });
 
+  it('strips an optional cursor-agent prefix before the calver', () => {
+    const versions = parseInspectedVersions(
+      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (x) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0\ncursor-agent 2026.09.18-9a7762b\ndevin 3000.10.31 (y)\nkiro-cli 2.22.1\n',
+    );
+    expect(versions['cursor']).toBe('2026.09.18');
+  });
+
   it('sends no version args by default and floors the native claude agent', () => {
     const seenArgs: Record<string, string>[] = [];
     buildCandidate(

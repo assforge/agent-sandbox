@@ -241,7 +241,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
   },
   agent: {
     list: 'Usage: sandbox agent list [--json, -j]\n\nList supported agents with their install channel and minimum version.\n',
-    outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, minimum, and latest versions. claude and grok track vendor feeds; the rest track npm.\n',
+    outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, minimum, and latest versions. claude and grok track vendor feeds, npm engines track npm, the rest report unknown.\n',
     upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly.\n',
   },
   image: {
