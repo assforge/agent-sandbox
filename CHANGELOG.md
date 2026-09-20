@@ -1,5 +1,15 @@
 # @assforge/cogent-sandbox
 
+## 0.26.0
+
+### Minor Changes
+
+- 75e7561: Add Grok and Agy as native agent engines: catalog entries, container
+  installs (version-addressable script for grok, latest-only script for
+  agy), seven-command version probe, fork seeding, and doctor drift
+  coverage. Kiro stays out: latest-only script plus social-login-only
+  auth does not fit the container model.
+
 ## 0.25.0
 
 ### Minor Changes
