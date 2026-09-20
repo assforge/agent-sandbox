@@ -760,6 +760,9 @@ describe('workspace lifecycle flows', () => {
       expect(seeds.length).toBe(1);
       expect(JSON.stringify(seeds[0])).toMatch(/\.grok/);
       expect(JSON.stringify(seeds[0])).toMatch(/\.gemini/);
+      expect(JSON.stringify(seeds[0])).toMatch(/\.kimi-code/);
+      expect(JSON.stringify(seeds[0])).toMatch(/\.augment/);
+      expect(JSON.stringify(seeds[0])).toMatch(/\.local\/share\/mimocode/);
       const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       expect(registry.workspaces[id]?.forks).toEqual(['w1']);

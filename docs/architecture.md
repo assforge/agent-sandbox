@@ -148,13 +148,20 @@ compares the running container against.
   qwen      npm     @qwen-code/qwen-code>=0.24.1
                                           .qwen
   kimi      npm     @moonshot-ai/kimi-code>=2.0.2
-                                          .kimi
-  mimo      npm     @mimo-ai/cli>=0.1.14  .mimo
+                                          .kimi-code (or $KIMI_CODE_HOME)
+  mimo      npm     @mimo-ai/cli>=0.1.14  .config/mimocode,
+                                          .local/share/mimocode (XDG;
+                                          auth and sessions live there)
   auggie    npm     @augmentcode/auggie>=0.36.0
-                                          .auggie
+                                          .augment (self-update disabled
+                                          in-image via
+                                          AUGMENT_DISABLE_AUTO_UPDATE)
 
-  grok, agy  supported since 0.26.0; kiro stays out (latest-only
-             script plus social-login-only auth does not fit containers)
+  grok, agy  supported since 0.26.0; DeepSeek has no official CLI
+             (its models already work through pi, opencode and aider);
+             Cursor stays out (calver versions, self-updates by default);
+             kiro stays out (latest-only script plus social-login-only
+             auth does not fit containers)
 
 ```
 
@@ -305,7 +312,8 @@ container (per workspace, --cap-drop ALL, user agent)
 
 `sandbox-entrypoint.sh` is where a home's shape is decided: it deletes any
 stale `ready.json`, creates `.claude`, `.codex`, `.copilot`, `.pi`,
-`.grok`, `.gemini`, `.qwen`, `.kimi`, `.mimo`, `.auggie`,
+`.grok`, `.gemini`, `.qwen`, `.kimi-code`, `.local/share/mimocode`,
+`.config/mimocode`, `.augment`,
 `.config/opencode`, `.config/github-copilot`, `work`, and `instances`
 under `$HOME`, and only then writes the token and `exec`s the command. It
 refuses to run without `SANDBOX_GENERATION` and
@@ -364,9 +372,11 @@ never launches an agent.
                                fork copies it whole)
   .gemini/                     agy state
   .qwen/                       qwen state
-  .kimi/                       kimi state
-  .mimo/                       mimo state
-  .auggie/                     auggie state
+  .kimi-code/                  kimi state
+  .config/mimocode/            mimo config
+  .config/mimocode/            mimo config
+  .local/share/mimocode/       mimo auth and sessions
+  .augment/                    auggie state
   .config/opencode/            opencode state
   .config/github-copilot/      copilot state
   work/                        the image's WORKDIR
@@ -388,7 +398,8 @@ shared   HOME=/home/agent. Default, including old entries without
          a recorded mode. Full continuity; do not run concurrent
          writers against the same files.
 fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok, .gemini,
-         .qwen, .kimi, .mimo, .auggie and .config: if the instance does not have that directory yet,
+         .qwen, .kimi-code, .local/share/mimocode, .augment
+         and .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.
          A failed copy is swallowed, so a fork can launch with an

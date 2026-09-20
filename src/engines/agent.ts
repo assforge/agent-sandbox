@@ -86,9 +86,9 @@ export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, minimumVersion: '1.0.34', latestEndpoint: 'https://x.ai/cli/stable' },
   { name: 'agy', statePaths: ['.gemini'], launch: ['agy'], npmPackage: null, minimumVersion: '1.2.7', latestEndpoint: null },
   { name: 'qwen', statePaths: ['.qwen'], launch: ['qwen'], npmPackage: '@qwen-code/qwen-code', minimumVersion: '0.24.1', latestEndpoint: null },
-  { name: 'kimi', statePaths: ['.kimi'], launch: ['kimi'], npmPackage: '@moonshot-ai/kimi-code', minimumVersion: '2.0.2', latestEndpoint: null },
-  { name: 'mimo', statePaths: ['.mimo'], launch: ['mimo'], npmPackage: '@mimo-ai/cli', minimumVersion: '0.1.14', latestEndpoint: null },
-  { name: 'auggie', statePaths: ['.auggie'], launch: ['auggie'], npmPackage: '@augmentcode/auggie', minimumVersion: '0.36.0', latestEndpoint: null },
+  { name: 'kimi', statePaths: ['.kimi-code'], launch: ['kimi'], npmPackage: '@moonshot-ai/kimi-code', minimumVersion: '2.0.2', latestEndpoint: null },
+  { name: 'mimo', statePaths: ['.config/mimocode', '.local/share/mimocode'], launch: ['mimo'], npmPackage: '@mimo-ai/cli', minimumVersion: '0.1.14', latestEndpoint: null },
+  { name: 'auggie', statePaths: ['.augment'], launch: ['auggie'], npmPackage: '@augmentcode/auggie', minimumVersion: '0.36.0', latestEndpoint: null },
 ];
 
 /** Agents with no verified install channel. Named here, never constructed. Empty today; the guard stays for future names. */

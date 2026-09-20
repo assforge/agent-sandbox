@@ -102,7 +102,7 @@ CLI --> ensureReady: running container, fingerprint current
 CLI --> registry: [txn] roster += {rollout, claude, homeMode=fork};
                      forks += rollout when the mode is fork
 CLI --> container: mkdir -p /home/agent/instances/rollout (as agent)
-CLI --> container: seed .claude/.codex/.copilot/.pi/.grok/.gemini/.qwen/.kimi/.mimo/.auggie/.config (absent only)
+CLI --> container: seed .claude/.codex/.copilot/.pi/.grok/.gemini/.qwen/.kimi-code/.local/share/mimocode/.augment/.config (absent only)
 CLI --> tmux: new-window rollout (exec vector, env incl. HOME + secrets)
 CLI <-- lock: release
 CLI --> tmux: attach (or skip with --no-attach)

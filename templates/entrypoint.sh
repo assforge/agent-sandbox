@@ -21,9 +21,10 @@ mkdir -p \
   "$HOME/.grok" \
   "$HOME/.gemini" \
   "$HOME/.qwen" \
-  "$HOME/.kimi" \
-  "$HOME/.mimo" \
-  "$HOME/.auggie" \
+  "$HOME/.kimi-code" \
+  "$HOME/.augment" \
+  "$HOME/.local/share/mimocode" \
+  "$HOME/.config/mimocode" \
   "$HOME/.config/opencode" \
   "$HOME/.config/github-copilot" \
   "$HOME/work" \

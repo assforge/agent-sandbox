@@ -3,7 +3,9 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { agentEngine, agentEngines, loadAgentCatalog, outdatedEngines } from '../src/engines/agent.js';
+import { agentEngine, agentEngines, BUILTIN_CATALOG, loadAgentCatalog, outdatedEngines } from '../src/engines/agent.js';
+import { SUPPORTED_AGENTS } from '../src/cli.js';
+import { FORK_STATE_DIRS } from '../src/lifecycle.js';
 import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
@@ -64,6 +66,17 @@ describe('agents', () => {
     const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, minimumVersion: '9.9.9', latestEndpoint: null }]);
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
     expect(agentEngine(extended, 'codex').installSpec().minimumVersion).toBe('0.155.1');
+  });
+
+  it('keeps catalog names, shortcuts, and fork seeds in agreement', () => {
+    for (const entry of BUILTIN_CATALOG) {
+      expect(SUPPORTED_AGENTS as readonly string[]).toContain(entry.name);
+      expect(agentEngine(engines, entry.name).launch).toEqual(entry.launch);
+      for (const state of entry.statePaths) {
+        const covered = FORK_STATE_DIRS.some((dir) => state === dir || state.startsWith(`${dir}/`));
+        expect(covered, `${entry.name}: ${state}`).toBe(true);
+      }
+    }
   });
 
   it('accepts grok and agy in user catalogs and still rejects unknown names', () => {
