@@ -1,6 +1,6 @@
 import { imageHelp } from '../help.js';
 import { UsageError } from '../cli.js';
-import { buildCandidate, INSPECT_VERSIONS_SCRIPT, parseInspectedVersions } from '../image.js';
+import { buildCandidate, buildInspectScript, engineProbeKeys, parseInspectedVersions } from '../image.js';
 import { RUNTIME_ENGINES, type RuntimeEngine } from '../engines/runtime.js';
 import { activateImage, formatVersionReceipt, rollbackImage } from '../image.js';
 import { acquireLock } from '../lock.js';
@@ -12,9 +12,10 @@ import { agentRegistry, loadRegistryOrThrow, resolveAndEnsure, selectRuntime, wi
 
 /** Best-effort version recording for activation. Null when the image cannot be probed; activation never depends on it. */
 function probeImageVersions(deps: MainDeps, rt: RuntimeEngine, image: string): Record<string, string> | null {
-  const probed = rt.runOneShot(deps.runner, image, { SANDBOX_GENERATION: 'record', SANDBOX_CONFIG_FINGERPRINT: 'record' }, ['sh', '-c', INSPECT_VERSIONS_SCRIPT]);
+  const script = buildInspectScript(agentRegistry(deps).values());
+  const probed = rt.runOneShot(deps.runner, image, { SANDBOX_GENERATION: 'record', SANDBOX_CONFIG_FINGERPRINT: 'record' }, ['sh', '-c', script]);
   if (probed.status !== 0) return null;
-  return parseInspectedVersions(probed.stdout);
+  return parseInspectedVersions(probed.stdout, engineProbeKeys(agentRegistry(deps).values()));
 }
 export async function imageCommand(deps: MainDeps, action: string, rest: string[], workspace: string | undefined): Promise<number> {  const registry = loadRegistryOrThrow(deps);
   const agents = agentRegistry(deps);  switch (action) {
@@ -67,8 +68,8 @@ export async function imageCommand(deps: MainDeps, action: string, rest: string[
             }
           },
           inspectBinaryVersions: (candidate) => {
-            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', INSPECT_VERSIONS_SCRIPT]);
-            return parseInspectedVersions(probed.stdout);
+            const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', buildInspectScript(agents.values())]);
+            return parseInspectedVersions(probed.stdout, engineProbeKeys(agents.values()));
           },
           verifyCandidate: (candidate) => {
             const generation = `verify-${Date.now()}`;

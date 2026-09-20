@@ -149,9 +149,11 @@ injected as process environment only into that instance's window. They
 are never accepted as command-line arguments, never baked into images,
 and never printed: show displays key names with masked values.
 
-Each instance also gets its own HOME directory inside the container,
-so agent configuration and history do not cross between instances of
-one workspace. Instances of one container can still read one another's
+Each instance also gets its own HOME directory inside the container
+when its home mode is fork or fresh, so agent configuration and history
+do not cross between instances of one workspace. Shared instances use
+the workspace home together and should not run concurrently.
+Instances of one container can still read one another's
 files; the isolation boundary is the container, not the window.
 
 ${SHARED_HELP}
@@ -225,7 +227,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     start: 'Usage: sandbox workspace start\n\nPrepare the environment without attaching.\n',
     stop: 'Usage: sandbox workspace stop\n\nAsk for confirmation when instances are live. Keeps volumes.\n',
     restart: 'Usage: sandbox workspace restart\n\nStop and bring the same image back. Asks for confirmation when instances are live.\n',
-    upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything is current, and otherwise build, activate, and recreate in one confirmed step.\n',
+    upgrade: 'Usage: sandbox workspace upgrade [agent|all]\n\nResolve latest agent versions, skip the build when everything recorded is current, and otherwise build, activate, and recreate in one confirmed step. Reports unresolvable versions instead of claiming current.\n',
     prune: 'Usage: sandbox workspace prune [--all] [--forks]\n\nRemove stopped containers of this workspace (or every registered workspace with --all) after one confirmation. --forks removes orphan fork state instead; credential files are never touched. Volumes, networks, images, and the registry are kept.\n',
     attach: 'Usage: sandbox workspace attach\n\nReconnect only; fails when the session is absent, warns when the container is stopped.\n',
     close: 'Usage: sandbox workspace close <instance>\n\nClose the instance window and forget the roster entry. Asks for confirmation when the window is still live; already-gone windows close without a prompt. Volumes, credentials, and fork state are kept; prune forks with: sandbox workspace prune --forks.\n',
@@ -242,7 +244,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
   agent: {
     list: 'Usage: sandbox agent list [--json, -j]\n\nList supported agents with their install channel and minimum version.\n',
     outdated: 'Usage: sandbox agent outdated [--json, -j]\n\nCompare installed, minimum, and latest versions. claude and grok track vendor feeds, npm engines track npm, the rest report unknown.\n',
-    upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly.\n',
+    upgrade: 'Usage: sandbox agent upgrade <agent|all>\n\nBuild a verified candidate only; activate explicitly afterwards. Running sessions are never restarted implicitly. Reports when latest versions cannot be resolved.\n',
   },
   image: {
     list: 'Usage: sandbox image list [--json, -j]\n\nList local workspace images.\n',

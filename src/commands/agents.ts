@@ -1,5 +1,5 @@
 import { agentEngine, type AgentEngine, type VersionRunner } from '../engines/agent.js';
-import { buildCandidate, INSPECT_VERSIONS_SCRIPT, parseInspectedVersions } from '../image.js';
+import { buildCandidate, buildInspectScript, engineProbeKeys, parseInspectedVersions } from '../image.js';
 import type { RuntimeEngine } from '../engines/runtime.js';
 import { loadCredentials } from '../credentials.js';
 import { homeDirForInstance } from '../lifecycle.js';
@@ -40,6 +40,9 @@ export function buildUpgradeCandidate(
   tag: string,
 ): { tag: string; versions: Record<string, string> } {
   const contextDir = new URL('../../templates', import.meta.url).pathname;
+  // Materialized once: Map.values() iterators are single-shot, and both the
+  // floors loop in buildCandidate and the inspect closure consume them.
+  const list = [...agents];
   return buildCandidate(
     {
       buildImage: (plan) => {
@@ -50,8 +53,8 @@ export function buildUpgradeCandidate(
         }
       },
       inspectBinaryVersions: (candidate) => {
-        const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', INSPECT_VERSIONS_SCRIPT]);
-        return parseInspectedVersions(probed.stdout);
+        const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'inspect', SANDBOX_CONFIG_FINGERPRINT: 'inspect' }, ['sh', '-c', buildInspectScript(list)]);
+        return parseInspectedVersions(probed.stdout, engineProbeKeys(list));
       },
       verifyCandidate: (candidate) => {
         const probed = rt.runOneShot(deps.runner, candidate, { SANDBOX_GENERATION: 'upgrade-verify', SANDBOX_CONFIG_FINGERPRINT: 'verify' }, ['sh', '-c', 'test -x /usr/local/bin/sandbox-entrypoint.sh']);
@@ -60,7 +63,7 @@ export function buildUpgradeCandidate(
     },
     contextDir,
     tag,
-    agents,
+    list,
     overrides,
   );
 }

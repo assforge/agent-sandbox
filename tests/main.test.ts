@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { main, hasGitDir, reattachOrHint, type MainDeps } from '../src/bin/sandbox.js';
+import { inspectRunningVersions } from '../src/commands/probes.js';
+import { DockerRuntimeEngine } from '../src/engines/runtime.js';
 import { emptyRegistry, saveRegistry } from '../src/registry.js';
 import type { TerminalEngine } from '../src/engines/terminal.js';
 
@@ -171,6 +173,41 @@ describe('main', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it('reports unresolvable latest versions instead of claiming current', async () => {
+    const d = deps();
+    expect(await main(['agent', 'upgrade', 'all'], d)).toBe(0);
+    expect(d.out.join('')).toMatch(/could not resolve latest versions; nothing built/);
+  });
+
+  it('reports unresolvable workspace upgrades the same way', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
+    try {
+      const registry = emptyRegistry();
+      registry.workspaces['w'] = {
+        id: 'w', root: '/w', container: 'c', image: 'sandbox-workspace:keep', previousImage: null,
+        session: 's', instances: [], homeVolume: 'v', network: 'open',
+        runtime: 'docker', terminal: 'tmux', mounts: [], forks: [],
+      };
+      saveRegistry(join(home, '.agent.sandbox', 'registry.json'), registry);
+      const d = deps({ homeDir: home });
+      expect(await main(['workspace', 'upgrade'], d)).toBe(0);
+      expect(d.out.join('')).toMatch(/could not resolve latest versions; nothing built/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('reads partial probes and skips dead ones', () => {
+    const partial = deps({
+      runner: { run: () => ({ status: 1, stdout: 'claude=2.1.276 (Claude Code)\n', stderr: '' }) },
+    });
+    expect(inspectRunningVersions(partial, DockerRuntimeEngine, 'c', '/w')).toMatchObject({ claude: '2.1.276' });
+    const dead = deps({
+      runner: { run: () => ({ status: 1, stdout: '', stderr: 'boom' }) },
+    });
+    expect(inspectRunningVersions(dead, DockerRuntimeEngine, 'c', '/w')).toBeNull();
   });
 
   it('fails closed with exit 2 on a corrupt registry', async () => {

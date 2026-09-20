@@ -169,7 +169,8 @@ user --> CLI: sandbox agent upgrade all
 CLI --> npm/curl: latest per engine (npm view; claude release feed)
 CLI <-- user sees: minimum X, latest Y per engine (unknown -> keep minimum)
 CLI --> docker: build candidate (NAME_VERSION args only for overrides)
-CLI --> candidate: sh -c 'claude --version; opencode --version; ...'
+CLI --> candidate: keyed version probe (key=$(binary --version)),
+                    one line per engine, unknown lines ignored
 CLI <-- candidate: versions must clear their floors, else throw
 CLI --> candidate: test -x /usr/local/bin/sandbox-entrypoint.sh
 CLI --> user: candidate verified + build receipt; activate explicitly with image activate
@@ -190,7 +191,8 @@ latest is already recorded on the entry the command reports current and builds n
 ```
 user --> CLI: sandbox workspace upgrade
 CLI --> resolve latest (as in 4a)
-every latest == recorded --> CLI --> user: nothing to build, exit 0
+nothing resolvable at all --> CLI --> user: could not resolve latest versions; nothing built
+every latest == recorded, all recorded --> CLI --> user: nothing to build, exit 0
 CLI --> user: [confirm] rebuild agents and recreate? (if instances live)
 CLI --> lock: acquire
 CLI --> docker: build + inspect + verify (as in 4a)

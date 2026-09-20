@@ -10,7 +10,7 @@ import { backupWorkspace, restoreWorkspace } from '../src/backup.js';
 import { normalizeLexical, redactedConfig, rejectForbiddenMount } from '../src/config.js';
 import { sameImageId } from '../src/docker.js';
 import { emptyRegistry, registerWorkspace } from '../src/registry.js';
-import { activateImage, buildCandidate, compareVersions, formatVersionReceipt, parseInspectedVersions, recordActivation, rollbackImage, versionAtLeast } from '../src/image.js';
+import { activateImage, buildCandidate, compareVersions, engineProbeKeys, formatVersionReceipt, parseInspectedVersions, recordActivation, rollbackImage, versionAtLeast } from '../src/image.js';
 import { acquireLock } from '../src/lock.js';
 import { assertWindowName } from '../src/terminal.js';
 import { dryRunMigration } from '../src/migrate.js';
@@ -281,11 +281,10 @@ describe('image lifecycle', () => {
     ).toThrow(/failed verification/);
   });
 
-  it('parses the fourteen-engine probe past the copilot update hint', () => {
-    // copilot 1.0.86 appends a stdout hint after its version line; it must
-    // not shift pi off position 5.
+  it('parses the fourteen-engine keyed probe', () => {
     const versions = parseInspectedVersions(
-      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\ngrok 1.0.34 (3736acbc8658) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0 (commit 7c61e5bb)\n2026.09.18-9a7762b\ndevin 3000.10.31 (b98cc431)\nkiro-cli 2.22.1\n',
+      'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 0.155.1\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\n0.85.1-unkeyed-stray\ngrok=grok 1.0.34 (3736acbc8658) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit 7c61e5bb)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\nRun \'copilot update\' to check for updates.\n',
+      engineProbeKeys(agentEngines().values()),
     );
     expect(versions).toMatchObject({
       claude: '2.1.276',
@@ -303,11 +302,30 @@ describe('image lifecycle', () => {
       devin: '3000.10.31',
       kiro: '2.22.1',
     });
+    expect(versions).not.toHaveProperty('0.85.1-unkeyed-stray');
+  });
+
+  it('tolerates missing and unknown keys without misattribution', () => {
+    // No kiro line and an unknown key: the rest still parse to themselves.
+    const versions = parseInspectedVersions(
+      'claude=2.1.276\n@openai/codex=codex-cli 0.155.1\nfrobnicate=nope\n',
+      engineProbeKeys(agentEngines().values()),
+    );
+    expect(versions).toMatchObject({ claude: '2.1.276', '@openai/codex': '0.155.1' });
+    expect(versions).not.toHaveProperty('kiro');
+    expect(versions).not.toHaveProperty('frobnicate');
+    // A duplicated allowed key keeps the first report.
+    const duped = parseInspectedVersions(
+      'claude=2.1.276\nclaude=9.9.9\n',
+      engineProbeKeys(agentEngines().values()),
+    );
+    expect(duped['claude']).toBe('2.1.276');
   });
 
   it('strips an optional cursor-agent prefix before the calver', () => {
     const versions = parseInspectedVersions(
-      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (x) [stable]\n1.2.7\n0.24.1\n2.0.2\n0.1.14\n0.36.0\ncursor-agent 2026.09.18-9a7762b\ndevin 3000.10.31 (y)\nkiro-cli 2.22.1\n',
+      'cursor=cursor-agent 2026.09.18-9a7762b\n',
+      engineProbeKeys(agentEngines().values()),
     );
     expect(versions['cursor']).toBe('2026.09.18');
   });

@@ -1,12 +1,14 @@
-import { INSPECT_VERSIONS_SCRIPT, parseInspectedVersions } from '../image.js';
+import { buildInspectScript, engineProbeKeys, parseInspectedVersions } from '../image.js';
 import type { RuntimeEngine } from '../engines/runtime.js';
 import type { MainDeps } from './deps.js';
+import { agentRegistry } from './lookup.js';
 /** Read agent versions from a running container. Null when it cannot be done. No tty: version output needs none, and -t fails without a terminal. */
 export function inspectRunningVersions(deps: MainDeps, rt: RuntimeEngine, container: string, workdir: string): Record<string, string> | null {
-  const spec = rt.execVector(container, { workdir, argv: ['sh', '-c', INSPECT_VERSIONS_SCRIPT], tty: false });
+  const script = buildInspectScript(agentRegistry(deps).values());
+  const spec = rt.execVector(container, { workdir, argv: ['sh', '-c', script], tty: false });
   const probed = deps.runner.run(spec.command, spec.args);
-  if (probed.status !== 0) return null;
-  return parseInspectedVersions(probed.stdout);
+  if (probed.status !== 0 && probed.stdout.trim().length === 0) return null;
+  return parseInspectedVersions(probed.stdout, engineProbeKeys(agentRegistry(deps).values()));
 }
 /**
  * Project hook commands missing inside the running container. One probe per
