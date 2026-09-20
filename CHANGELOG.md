@@ -1,5 +1,16 @@
 # @assforge/cogent-sandbox
 
+## 0.27.0
+
+### Minor Changes
+
+- 76a63b7: Add Qwen, Kimi, Mimo and Auggie as npm agent engines: catalog
+  entries, container installs, eleven-command version probe, fork
+  seeding, and doctor drift coverage. DeepSeek has no official CLI
+  (its models already work through pi, opencode and aider); Cursor
+  stays out (calver versions fail the floor gate, self-updates by
+  default); Kiro stays out (latest-only plus social-login-only).
+
 ## 0.26.0
 
 ### Minor Changes
