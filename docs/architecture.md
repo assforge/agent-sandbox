@@ -146,11 +146,14 @@ compares the running container against.
   agy       native  script, latest-only, no version selection
                                           .gemini
 
-  grok, agy  named, never constructed: no verified linux install
-             channel (the host binaries are darwin-only)
+  grok, agy  supported since 0.26.0; kiro stays out (latest-only
+             script plus social-login-only auth does not fit containers)
+
 ```
 
-`claude` is the only native channel — the vendor installer under
+`claude` was the first native channel; grok and agy joined it. A native
+
+`claude` was the first native channel — the vendor installer under
 `/opt/claude` — and it carries a floor like any other agent. A native
 engine reads its `latestEndpoint` for the latest release and returns
 null rather than guessing when the feed is unreadable or malformed; npm
@@ -162,10 +165,11 @@ User catalogs are data too: `~/.agent.sandbox/engines/*.json`, read in
 filename order, and an invalid file fails closed naming its path.
 Built-ins win a name conflict, so no catalog can redefine `claude`.
 
-`grok` and `agy` are refused in **two** places on purpose — at catalog
-load as well as at lookup. A catalog that declares one registers it
-under its own name, so the lookup would *succeed* and the lookup guard
-would never run; the load-boundary check is what closes that path.
+Names with no verified install channel are refused in **two** places on
+purpose — at catalog load as well as at lookup. A catalog that declares
+one registers it under its own name, so the lookup would *succeed* and
+the lookup guard would never run; the load-boundary check is what closes
+that path. The list is empty today; the guard stays for future names.
 
 **TerminalEngine — where windows live**
 
@@ -270,6 +274,14 @@ image (built from templates/Dockerfile, no secrets)
   /opt/claude              claude via the vendor installer (latest unless
                            CLAUDE_VERSION overrides), agent-owned;
                            PATH gains /opt/claude/.local/bin
+  /opt/grok                grok via its installer (GROK_VERSION overrides),
+                           agent-owned; binary at /opt/grok/bin/grok with
+                           a 130MB downloads cache alongside (runtime
+                           symlinks into it, so it stays); PATH gains
+                           /opt/grok/bin
+  /opt/agy                 agy via its installer (latest-only), agent-owned;
+                           single 213MB binary at /opt/agy/bin/agy;
+                           PATH gains /opt/agy/bin
   agent user               uid 1001 (pinned); USER agent for the workload
   workdir                  /home/agent/work
   entrypoint               /usr/local/bin/sandbox-entrypoint.sh

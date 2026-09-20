@@ -46,11 +46,14 @@ COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
 
 # Grok ships outside npm: installer script, version-addressable, API-key auth.
-# Installed under /opt/grok (outside the home volume) with a PATH symlink,
-# mirroring the claude layout below. agy has no version selection, so it
-# always tracks latest and takes no build arg.
-RUN mkdir -p /opt/grok && export HOME=/opt/grok \
+# Installed under /opt/grok (outside the home volume). GROK_BIN_DIR must be
+# exported in the same shell (a VAR=val prefix on `curl | bash` only reaches
+# curl, not the installer); the downloads cache stays because BIN_DIR links
+# into it. agy has no version selection, so it always tracks latest and
+# takes no build arg.
+RUN mkdir -p /opt/grok && export HOME=/opt/grok GROK_BIN_DIR=/opt/grok/bin \
   && if [ -n "${GROK_VERSION}" ]; then curl -fsSL https://x.ai/cli/install.sh | bash -s -- "${GROK_VERSION}"; else curl -fsSL https://x.ai/cli/install.sh | bash; fi \
+  && rm -rf /opt/grok/.bashrc /opt/grok/.cache \
   && chown -R agent:agent /opt/grok \
   && mkdir -p /opt/agy/bin && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /opt/agy/bin \
   && chown -R agent:agent /opt/agy

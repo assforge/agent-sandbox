@@ -43,6 +43,12 @@ describe('agents', () => {
     expect(entries[6]).toMatchObject({ agent: 'agy', npmPackage: null, installed: null, minimum: '1.2.7', latest: null });
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
+    // A feed that gains a suffix still resolves to the leading version.
+    const suffixed = outdatedEngines(
+      { installedVersion: () => null, latestVersion: () => null, fetchText: () => '1.0.34 (stable)\n' },
+      engines.values(),
+    );
+    expect(suffixed.find((entry) => entry.agent === 'grok')?.latest).toBe('1.0.34');
   });
 
   it('adds an eighth agent through data alone', () => {

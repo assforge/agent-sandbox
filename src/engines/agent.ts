@@ -60,7 +60,10 @@ export class NativeAgentEngine implements AgentEngine {
   latestVersion(runner: VersionRunner): string | null {
     if (!this.endpoint) return null;
     const text = runner.fetchText(this.endpoint);
-    return text && /^[0-9]+\.[0-9]+\.[0-9]+/.test(text.trim()) ? text.trim() : null;
+    if (!text) return null;
+    // Extract the leading version, never the whole line: a feed that gains
+    // a suffix must not hand an invalid version to the installer.
+    return text.trim().match(/^[0-9]+\.[0-9]+\.[0-9]+/)?.[0] ?? null;
   }
 }
 

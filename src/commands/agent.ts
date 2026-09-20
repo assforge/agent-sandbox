@@ -53,7 +53,11 @@ export async function agentCommand(deps: MainDeps, action: string, rest: string[
       const resolved = resolveAgentVersions(deps, resolveAgentDefs(agents, names), versionQueries);
       const overrides: Record<string, string> = {};
       for (const item of resolved) overrides[item.key] = item.latest;
-      if (Object.keys(overrides).length === 0) return 0;
+      // An explicitly named engine whose latest cannot be resolved (agy:
+      // latest-only, no feed) still rebuilds bare latest-first; only a bare
+      // `all` with nothing resolvable is a no-op.
+      const unresolved = names.filter((name) => !resolved.some((item) => item.def.name === name));
+      if (Object.keys(overrides).length === 0 && (target === 'all' || unresolved.length === 0)) return 0;
       const tag = `sandbox-workspace:upgrade-${Date.now()}`;
       const built = buildUpgradeCandidate(deps, rt, agents.values(), overrides, tag);
       deps.stdout(`upgrade candidate ${built.tag} verified (${formatVersionReceipt(built.versions)}); running sessions are untouched.\nActivate explicitly with: sandbox image activate ${built.tag}\n`);

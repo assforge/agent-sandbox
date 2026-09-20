@@ -462,6 +462,10 @@ describe('workspace lifecycle flows', () => {
     try {
       expect(await main(['agent', 'upgrade', 'codex'], deps)).toBe(0);
       expect(out.join('')).toContain('Activate explicitly');
+      out.length = 0;
+      // agy has no latest feed: an explicit single still rebuilds bare latest-first.
+      expect(await main(['agent', 'upgrade', 'agy'], deps)).toBe(0);
+      expect(out.join('')).toContain('Activate explicitly');
       expect(await main(['agent', 'upgrade', 'all'], deps)).toBe(0);
       expect(out.join('')).toContain('claude: minimum 2.1.276, latest 2.1.277');
       expect(await main(['agent', 'upgrade', 'nope'], deps)).toBe(1);
@@ -750,6 +754,8 @@ describe('workspace lifecycle flows', () => {
       expect(homeOf('w2')).toBe('HOME=/home/agent/instances/w2');
       const seeds = world.calls.filter((call) => call.some((arg) => typeof arg === 'string' && arg.includes('cp -a')));
       expect(seeds.length).toBe(1);
+      expect(JSON.stringify(seeds[0])).toMatch(/\.grok/);
+      expect(JSON.stringify(seeds[0])).toMatch(/\.gemini/);
       const registry = loadRegistry(join(home, '.agent.sandbox', 'registry.json'));
       const id = Object.keys(registry.workspaces)[0] as string;
       expect(registry.workspaces[id]?.forks).toEqual(['w1']);
