@@ -611,6 +611,9 @@ describe('help', () => {
       expect(top).toContain(token);
     }
     expect(agentHelp()).toContain('claude, opencode');
+    for (const name of SUPPORTED_AGENTS) {
+      expect(top).toContain(name);
+    }
     expect(workspaceHelp()).toContain('  attach       Reconnect to the terminal session');
     expect(imageHelp()).toContain('does not reverse a data migration');
     expect(describeAction('workspace', 'restart')).toContain('Usage: sandbox workspace restart');

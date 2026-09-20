@@ -34,6 +34,13 @@ mkdir -p \
   "$HOME/work" \
   "$HOME/instances"
 
+# Kiro self-updates in the background, which would move binaries under a
+# recorded image and manufacture drift. Seed the opt-out once: an existing
+# settings file means the user manages it. Never fails the start.
+if [ ! -e "$HOME/.kiro/settings/cli.json" ] && command -v kiro-cli >/dev/null 2>&1; then
+  kiro-cli settings "app.disableAutoupdates" "true" >/dev/null 2>&1 || true
+fi
+
 printf '{"generation":"%s","fingerprint":"%s","started_at":%s}\n' "$GENERATION" "$FINGERPRINT" "$(date +%s)" > "$READY_DIR/ready.json"
 
 exec "$@"

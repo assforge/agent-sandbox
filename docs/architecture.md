@@ -162,11 +162,10 @@ compares the running container against.
                                           .local/share/devin (XDG)
   kiro      native  script, latest-only   .kiro
 
-  grok, agy  supported since 0.26.0; DeepSeek has no official CLI
-             (its models already work through pi, opencode and aider);
-             Cursor stays out (calver versions, self-updates by default);
-             kiro stays out (latest-only script plus social-login-only
-             auth does not fit containers)
+  grok, agy  supported since 0.26.0; cursor, devin and kiro since
+             0.28.0. DeepSeek has no official CLI (its models already
+             work through pi, opencode and aider); aider and goose stay
+             out (python toolchain / unvetted installer).
 
 ```
 
@@ -407,7 +406,8 @@ shared   HOME=/home/agent. Default, including old entries without
          a recorded mode. Full continuity; do not run concurrent
          writers against the same files.
 fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok, .gemini,
-         .qwen, .kimi-code, .local/share/mimocode, .augment
+         .qwen, .kimi-code, .local/share/mimocode, .augment, .cursor,
+         .config/devin, .local/share/devin, .kiro
          and .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.
@@ -418,8 +418,10 @@ fresh    Empty room. Nothing is copied, nothing is shared.
 ```
 
 The copy is unfiltered. A comment in `lifecycle.ts` calls the fork list
-"caches excluded", and no code excludes them: everything under those fourteen
-directories is copied. Read that comment as intent, not as behaviour.
+"caches excluded", and no code excludes them: everything under those
+fifteen directories is copied (fourteen engines; `.config/devin` rides
+alongside the `.config` whole-tree entry). Read that comment as intent,
+not as behaviour.
 
 Secrets stay orthogonal: credential files live host-side and inject as
 process environment regardless of home mode. Closing an instance drops

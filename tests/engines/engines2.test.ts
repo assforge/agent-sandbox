@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_RUNTIME, DEFAULT_TERMINAL, loadHostConfig, saveHostConfig } from '../../src/hostconfig.js';
-import { loadUserCatalog } from '../../src/engines/agent.js';
+import { agentEngine, agentEngines, loadUserCatalog } from '../../src/engines/agent.js';
 import { AppleContainerRuntimeEngine } from '../../src/engines/apple.js';
 import type { RunResult } from '../../src/docker.js';
 
@@ -50,6 +50,8 @@ describe('user catalog', () => {
       const entries = loadUserCatalog(home);
       expect(entries).toHaveLength(1);
       expect(entries[0]?.name).toBe('kiro');
+      // Merging keeps the built-in on a name conflict.
+      expect(agentEngine(agentEngines(entries), 'kiro').launch).toEqual(['kiro-cli']);
       writeFileSync(join(dir, 'bad.json'), '{nope', 'utf8');
       expect(() => loadUserCatalog(home)).toThrow(/bad\.json/);
     } finally {
