@@ -1,5 +1,14 @@
 # @assforge/cogent-sandbox
 
+## 0.28.1
+
+### Patch Changes
+
+- d852c8e: Close final-review findings: workspace upgrade rebuilds when the
+  recording predates an engine, doctor reports image-absent engines,
+  cursor version parsing tolerates its binary prefix, registry
+  validation tightened, and leftover doc contradictions fixed.
+
 ## 0.28.0
 
 ### Minor Changes
