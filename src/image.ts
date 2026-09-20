@@ -14,7 +14,7 @@ export interface ImageRunner {
 }
 
 /** Version probe shared by upgrade inspect and the doctor drift check. */
-export const INSPECT_VERSIONS_SCRIPT = 'claude --version; opencode --version; codex --version; copilot --version; pi --version';
+export const INSPECT_VERSIONS_SCRIPT = 'claude --version; opencode --version; codex --version; copilot --version; pi --version; grok --version; agy --version';
 
 /** Parse the inspect probe: first tokens per line, keyed for buildCandidate. */
 export function parseInspectedVersions(stdout: string): Record<string, string> {
@@ -36,6 +36,8 @@ export function parseInspectedVersions(stdout: string): Record<string, string> {
   if (lines[2]) versions['@openai/codex'] = (lines[2] as string).replace(/^codex-cli /, '');
   if (lines[3]) versions['@github/copilot'] = (lines[3] as string).replace(/^GitHub Copilot CLI /, '').replace(/\.$/, '');
   if (lines[4]) versions['@earendil-works/pi-coding-agent'] = lines[4] as string;
+  if (lines[5]) versions['grok'] = (lines[5] as string).replace(/^grok /, '').split(' ')[0] as string;
+  if (lines[6]) versions['agy'] = lines[6] as string;
   return versions;
 }
 

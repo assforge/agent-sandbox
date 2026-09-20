@@ -18,6 +18,8 @@ mkdir -p \
   "$HOME/.codex" \
   "$HOME/.copilot" \
   "$HOME/.pi" \
+  "$HOME/.grok" \
+  "$HOME/.gemini" \
   "$HOME/.config/opencode" \
   "$HOME/.config/github-copilot" \
   "$HOME/work" \

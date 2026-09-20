@@ -18,11 +18,14 @@ import { agentHelp, describeAction, imageHelp, topHelp, workspaceHelp } from '..
 describe('agents', () => {
   const engines = agentEngines();
 
-  it('floors npm versions and rejects unsupported agents', () => {
+  it('floors npm versions and resolves the native engines', () => {
     expect(agentEngine(engines, 'codex').installSpec()).toMatchObject({ npmPackage: '@openai/codex', minimumVersion: '0.155.1' });
     expect(agentEngine(engines, 'pi').installSpec()).toMatchObject({ npmPackage: '@earendil-works/pi-coding-agent', minimumVersion: '0.85.1' });
     expect(agentEngine(engines, 'pi').launch).toEqual(['pi']);
-    expect(() => agentEngine(engines, 'grok')).toThrow(/no verified linux install channel/);
+    expect(agentEngine(engines, 'grok').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '1.0.34' });
+    expect(agentEngine(engines, 'grok').launch).toEqual(['grok']);
+    expect(agentEngine(engines, 'agy').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '1.2.7' });
+    expect(agentEngine(engines, 'agy').launch).toEqual(['agy']);
     expect(() => agentEngine(engines, 'nope')).toThrow(/unknown agent/);
   });
 
@@ -32,33 +35,31 @@ describe('agents', () => {
       latestVersion: () => '9.9.9',
       fetchText: () => '9.9.9',
     }, engines.values());
-    expect(entries).toHaveLength(5);
+    expect(entries).toHaveLength(7);
     expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, minimum: '2.1.276', latest: '9.9.9' });
     expect(entries[1]).toMatchObject({ agent: 'opencode', minimum: '1.18.31' });
     expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', minimum: '0.85.1' });
-    expect(() => agentEngine(engines, 'agy')).toThrow(/no verified linux install channel/);
+    expect(entries[5]).toMatchObject({ agent: 'grok', npmPackage: null, minimum: '1.0.34', latest: '9.9.9' });
+    expect(entries[6]).toMatchObject({ agent: 'agy', npmPackage: null, installed: null, minimum: '1.2.7', latest: null });
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
   });
 
-  it('adds a sixth agent through data alone', () => {
+  it('adds an eighth agent through data alone', () => {
     const extended = agentEngines([{ name: 'kiro', statePaths: ['.kiro'], launch: ['kiro'], npmPackage: null, minimumVersion: '9.9.9', latestEndpoint: null }]);
     expect(agentEngine(extended, 'kiro').launch).toEqual(['kiro']);
     expect(agentEngine(extended, 'codex').installSpec().minimumVersion).toBe('0.155.1');
   });
 
-  it('refuses an unsupported agent however it reaches the registry', () => {
+  it('accepts grok and agy in user catalogs and still rejects unknown names', () => {
     const grok = { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, minimumVersion: '1.0.0', latestEndpoint: null };
-    // A user catalog document declaring grok/agy fails closed at load.
-    expect(() => loadAgentCatalog([grok])).toThrow(/not supported in containers/);
-    expect(() => loadAgentCatalog([{ ...grok, name: 'agy' }])).toThrow(/not supported in containers/);
+    // Formerly unsupported names now load like any other engine.
+    expect(loadAgentCatalog([grok])).toHaveLength(1);
+    expect(loadAgentCatalog([{ ...grok, name: 'agy' }])).toHaveLength(1);
     // A supported extra agent is still accepted.
     expect(loadAgentCatalog([{ ...grok, name: 'kiro' }])).toHaveLength(1);
-    // And the guard is unconditional: even when the lookup would succeed, it
-    // throws. This is the case a user catalog used to create.
-    const forged = new Map(engines);
-    forged.set('grok', engines.get('codex') as NonNullable<ReturnType<typeof engines.get>>);
-    expect(() => agentEngine(forged, 'grok')).toThrow(/no verified linux install channel/);
+    // Unknown names still fail closed at lookup.
+    expect(() => agentEngine(engines, 'cursor')).toThrow(/unknown agent/);
   });
 });
 
@@ -126,6 +127,8 @@ describe('image lifecycle', () => {
       '@openai/codex': '9.9.9',
       '@github/copilot': '1.0.86',
       '@earendil-works/pi-coding-agent': '0.85.1',
+      grok: '9.9.9',
+      agy: '1.2.7',
     };
     const result = buildCandidate(
       {
@@ -173,6 +176,8 @@ describe('image lifecycle', () => {
           '@openai/codex': '0.155.1',
           '@github/copilot': '1.0.86',
           '@earendil-works/pi-coding-agent': '0.85.1',
+          grok: '1.0.34',
+          agy: '1.2.7',
         }),
         verifyCandidate: () => true,
       },
@@ -207,6 +212,8 @@ describe('image lifecycle', () => {
             '@openai/codex': '0.155.1',
             '@github/copilot': '1.0.86',
             '@earendil-works/pi-coding-agent': '0.85.1',
+            grok: '1.0.34',
+            agy: '1.2.7',
           }),
           verifyCandidate: () => false,
         },
@@ -217,11 +224,11 @@ describe('image lifecycle', () => {
     ).toThrow(/failed verification/);
   });
 
-  it('parses the five-engine probe past the copilot update hint', () => {
+  it('parses the seven-engine probe past the copilot update hint', () => {
     // copilot 1.0.86 appends a stdout hint after its version line; it must
     // not shift pi off position 5.
     const versions = parseInspectedVersions(
-      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\n',
+      '2.1.276 (Claude Code)\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\nRun \'copilot update\' to check for updates.\n0.85.1\ngrok 1.0.34 (3736acbc8658) [stable]\n1.2.7\n',
     );
     expect(versions).toMatchObject({
       claude: '2.1.276',
@@ -229,6 +236,8 @@ describe('image lifecycle', () => {
       '@openai/codex': '0.155.1',
       '@github/copilot': '1.0.86',
       '@earendil-works/pi-coding-agent': '0.85.1',
+      grok: '1.0.34',
+      agy: '1.2.7',
     });
   });
 
@@ -246,6 +255,8 @@ describe('image lifecycle', () => {
           '@openai/codex': '0.155.1',
           '@github/copilot': '1.0.86',
           '@earendil-works/pi-coding-agent': '0.85.1',
+          grok: '1.0.34',
+          agy: '1.2.7',
         }),
         verifyCandidate: () => true,
       },

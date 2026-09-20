@@ -24,6 +24,7 @@ class FakeWorld {
   failBuild = false;
   lastBuildArgs: Record<string, string> = {};
   curlText = '2.1.277\n';
+  grokText = '1.0.34\n';
   execVersions: string | null = null;
   /** When true, list-windows answers with a failure instead of a listing. */
   windowListingFails = false;
@@ -52,7 +53,11 @@ class FakeWorld {
     if (command === 'docker') return this.docker(args);
     if (command === 'tmux') return this.tmux(args);
     if (command === 'npm') return this.npm(args);
-    if (command === 'curl') return { status: 0, stdout: this.curlText, stderr: '' };
+    if (command === 'curl') {
+      const url = args[args.length - 1];
+      if (typeof url === 'string' && url.includes('x.ai')) return { status: 0, stdout: this.grokText, stderr: '' };
+      return { status: 0, stdout: this.curlText, stderr: '' };
+    }
     return { status: 0, stdout: '', stderr: '' };
   };
 
@@ -163,7 +168,7 @@ class FakeWorld {
         const arg = (name: string, fallback: string): string => this.lastBuildArgs[name] ?? fallback;
         return {
           status: 0,
-          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.155.1')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n${arg('PI_VERSION', '0.85.1')}\n`,
+          stdout: `${arg('CLAUDE_VERSION', '2.1.276')}\n${arg('OPENCODE_VERSION', '1.18.31')}\ncodex-cli ${arg('CODEX_VERSION', '0.155.1')}\nGitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n${arg('PI_VERSION', '0.85.1')}\ngrok ${arg('GROK_VERSION', '1.0.34')} (abc) [stable]\n${arg('AGY_VERSION', '1.2.7')}\n`,
           stderr: '',
         };
       }
@@ -206,7 +211,7 @@ class FakeWorld {
     if (verb === 'exec' && rest.some((arg) => typeof arg === 'string' && arg.includes('claude --version'))) {
       return {
         status: 0,
-        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\n',
+        stdout: this.execVersions ?? '2.1.276\n1.18.31\ncodex-cli 0.155.1\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (abc) [stable]\n1.2.7\n',
         stderr: '',
       };
     }
@@ -530,7 +535,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).not.toContain('agent-drift');
-      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.86.\n0.85.1\n';
+      world.execVersions = '2.1.276\n1.18.31\ncodex-cli 9.9.9\nGitHub Copilot CLI 1.0.86.\n0.85.1\ngrok 1.0.34 (abc) [stable]\n1.2.7\n';
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('agent-drift-codex');
       expect(out.join('')).toContain('sandbox workspace upgrade');

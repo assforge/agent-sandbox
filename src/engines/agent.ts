@@ -80,10 +80,12 @@ export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'codex', statePaths: ['.codex'], launch: ['codex'], npmPackage: '@openai/codex', minimumVersion: '0.155.1', latestEndpoint: null },
   { name: 'copilot', statePaths: ['.copilot', '.config/github-copilot'], launch: ['copilot'], npmPackage: '@github/copilot', minimumVersion: '1.0.86', latestEndpoint: null },
   { name: 'pi', statePaths: ['.pi/agent'], launch: ['pi'], npmPackage: '@earendil-works/pi-coding-agent', minimumVersion: '0.85.1', latestEndpoint: null },
+  { name: 'grok', statePaths: ['.grok'], launch: ['grok'], npmPackage: null, minimumVersion: '1.0.34', latestEndpoint: 'https://x.ai/cli/stable' },
+  { name: 'agy', statePaths: ['.gemini'], launch: ['agy'], npmPackage: null, minimumVersion: '1.2.7', latestEndpoint: null },
 ];
 
-/** Agents with no verified install channel. Named here, never constructed. */
-export const UNSUPPORTED_AGENT_NAMES = ['grok', 'agy'] as const;
+/** Agents with no verified install channel. Named here, never constructed. Empty today; the guard stays for future names. */
+export const UNSUPPORTED_AGENT_NAMES: readonly string[] = [];
 
 function validateCatalogEntry(value: unknown): AgentCatalogEntry {
   if (typeof value !== 'object' || value === null) throw new Error('agent catalog entry must be an object');

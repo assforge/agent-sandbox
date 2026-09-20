@@ -24,7 +24,7 @@ describe('engine registries', () => {
     expect(() => runtimeEngine('podman')).toThrow(/unknown runtime engine/);
   });
 
-  it('adds a fifth agent through catalog data alone (AC-4)', () => {
+  it('adds another agent through catalog data alone (AC-4)', () => {
     const document = JSON.parse(
       '[{"name":"kiro","statePaths":[".kiro"],"launch":["kiro"],"npmPackage":null,"minimumVersion":"9.9.9"}]',
     ) as unknown;
