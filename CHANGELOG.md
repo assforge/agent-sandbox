@@ -1,5 +1,22 @@
 # @assforge/cogent-sandbox
 
+## 0.25.0
+
+### Minor Changes
+
+- 5e3f3cd: Latest-first version strategy: images install whatever the channels
+  currently serve instead of frozen pins. Catalog versions are floors,
+  the build gate demands every binary report at or above its floor, the
+  resolved set prints as the build receipt and records on the registry
+  entry at activation, and doctor compares the running container against
+  that recording (falling back to the floor without one).
+
+### Patch Changes
+
+- 5e3f3cd: `image list` shows unreferenced local images with the prune hint, in
+  text and JSON. `workspace.ts` splits into lifecycle/instances/config/
+  state modules; no behaviour change.
+
 ## 0.24.1
 
 ### Patch Changes
