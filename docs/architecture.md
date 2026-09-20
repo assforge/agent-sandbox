@@ -126,7 +126,7 @@ AgentEngine     name, statePaths, launch, installSpec(), latestVersion()
   statePaths    home-relative dirs this agent owns (fork seeds, see §5)
   launch        argv vector, never a shell string
 
-built-in catalog — seven entries, held as data. Versions are floors, not
+built-in catalog — eleven entries, held as data. Versions are floors, not
 pins: the image installs whatever the channels currently serve
 (latest-first), and the build gate demands every binary report at or
 above its floor. The resolved set is printed as the build receipt and
@@ -145,9 +145,23 @@ compares the running container against.
             https://x.ai/cli/stable      .grok
   agy       native  script, latest-only, no version selection
                                           .gemini
+  qwen      npm     @qwen-code/qwen-code>=0.24.1
+                                          .qwen
+  kimi      npm     @moonshot-ai/kimi-code>=2.0.2
+                                          .kimi-code (or $KIMI_CODE_HOME)
+  mimo      npm     @mimo-ai/cli>=0.1.14  .config/mimocode,
+                                          .local/share/mimocode (XDG;
+                                          auth and sessions live there)
+  auggie    npm     @augmentcode/auggie>=0.36.0
+                                          .augment (self-update disabled
+                                          in-image via
+                                          AUGMENT_DISABLE_AUTO_UPDATE)
 
-  grok, agy  supported since 0.26.0; kiro stays out (latest-only
-             script plus social-login-only auth does not fit containers)
+  grok, agy  supported since 0.26.0; DeepSeek has no official CLI
+             (its models already work through pi, opencode and aider);
+             Cursor stays out (calver versions, self-updates by default);
+             kiro stays out (latest-only script plus social-login-only
+             auth does not fit containers)
 
 ```
 
@@ -298,7 +312,8 @@ container (per workspace, --cap-drop ALL, user agent)
 
 `sandbox-entrypoint.sh` is where a home's shape is decided: it deletes any
 stale `ready.json`, creates `.claude`, `.codex`, `.copilot`, `.pi`,
-`.grok`, `.gemini`,
+`.grok`, `.gemini`, `.qwen`, `.kimi-code`, `.local/share/mimocode`,
+`.config/mimocode`, `.augment`,
 `.config/opencode`, `.config/github-copilot`, `work`, and `instances`
 under `$HOME`, and only then writes the token and `exec`s the command. It
 refuses to run without `SANDBOX_GENERATION` and
@@ -356,6 +371,12 @@ never launches an agent.
   .grok/                       grok state (includes a downloads cache;
                                fork copies it whole)
   .gemini/                     agy state
+  .qwen/                       qwen state
+  .kimi-code/                  kimi state
+  .config/mimocode/            mimo config
+  .config/mimocode/            mimo config
+  .local/share/mimocode/       mimo auth and sessions
+  .augment/                    auggie state
   .config/opencode/            opencode state
   .config/github-copilot/      copilot state
   work/                        the image's WORKDIR
@@ -376,8 +397,9 @@ Per-instance HOME modes, recorded on the roster entry at birth:
 shared   HOME=/home/agent. Default, including old entries without
          a recorded mode. Full continuity; do not run concurrent
          writers against the same files.
-fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok,
-         .gemini and .config: if the instance does not have that directory yet,
+fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok, .gemini,
+         .qwen, .kimi-code, .local/share/mimocode, .augment
+         and .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.
          A failed copy is swallowed, so a fork can launch with an
@@ -387,7 +409,7 @@ fresh    Empty room. Nothing is copied, nothing is shared.
 ```
 
 The copy is unfiltered. A comment in `lifecycle.ts` calls the fork list
-"caches excluded", and no code excludes them: everything under those seven
+"caches excluded", and no code excludes them: everything under those eleven
 directories is copied. Read that comment as intent, not as behaviour.
 
 Secrets stay orthogonal: credential files live host-side and inject as
@@ -400,7 +422,7 @@ removes orphan fork directories (credential files never).
 ```
 overrides (upgrade flows, emergencies) --> build args <AGENT>_VERSION
   --> build (docker or apple)
-  --> inspect: the seven CLI versions must clear their catalog floors;
+  --> inspect: the eleven CLI versions must clear their catalog floors;
       the resolved set is the build receipt
   --> verify: the entrypoint is executable, and -- on the `image build`
       path only -- a throwaway run wrote a ready.json carrying the

@@ -7,6 +7,10 @@ ARG OPENCODE_VERSION
 ARG CODEX_VERSION
 ARG COPILOT_VERSION
 ARG PI_VERSION
+ARG QWEN_VERSION
+ARG KIMI_VERSION
+ARG MIMO_VERSION
+ARG AUGGIE_VERSION
 ARG CLAUDE_VERSION
 ARG GROK_VERSION
 
@@ -16,6 +20,10 @@ ARG OPENCODE_VERSION
 ARG CODEX_VERSION
 ARG COPILOT_VERSION
 ARG PI_VERSION
+ARG QWEN_VERSION
+ARG KIMI_VERSION
+ARG MIMO_VERSION
+ARG AUGGIE_VERSION
 ARG CLAUDE_VERSION
 ARG GROK_VERSION
 
@@ -27,6 +35,10 @@ RUN apt-get update \
     "@openai/codex${CODEX_VERSION:+@$CODEX_VERSION}" \
     "@github/copilot${COPILOT_VERSION:+@$COPILOT_VERSION}" \
     "@earendil-works/pi-coding-agent${PI_VERSION:+@$PI_VERSION}" \
+    "@qwen-code/qwen-code${QWEN_VERSION:+@$QWEN_VERSION}" \
+    "@moonshot-ai/kimi-code${KIMI_VERSION:+@$KIMI_VERSION}" \
+    "@mimo-ai/cli${MIMO_VERSION:+@$MIMO_VERSION}" \
+    "@augmentcode/auggie${AUGGIE_VERSION:+@$AUGGIE_VERSION}" \
   && npm cache clean --force
 
 # Non-root agent user for everything inside the workspace container.
@@ -39,7 +51,8 @@ RUN apt-get update \
 ENV HOME=/home/agent
 RUN useradd -u 1001 -m -s /bin/bash agent \
   && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi /home/agent/.grok \
-    /home/agent/.gemini /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/work \
+    /home/agent/.gemini /home/agent/.qwen /home/agent/.kimi-code /home/agent/.augment /home/agent/.local/share/mimocode \
+    /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/.config/mimocode /home/agent/work \
   && chown -R agent:agent /home/agent
 
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
@@ -58,6 +71,9 @@ RUN mkdir -p /opt/grok && export HOME=/opt/grok GROK_BIN_DIR=/opt/grok/bin \
   && mkdir -p /opt/agy/bin && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /opt/agy/bin \
   && chown -R agent:agent /opt/agy
 ENV PATH="/opt/grok/bin:/opt/agy/bin:${PATH}"
+# Auggie self-updates by default, which would move binaries under a recorded
+# image and manufacture drift. Versions change only at build in this model.
+ENV AUGMENT_DISABLE_AUTO_UPDATE=true
 # Claude ships outside npm and must live outside the home volume: the
 # volume is mounted over /home/agent at runtime and would mask anything
 # baked in there. The installer lays everything under $HOME, so point it
