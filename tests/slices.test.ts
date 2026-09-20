@@ -260,6 +260,8 @@ describe('image lifecycle', () => {
     expect(compareVersions('1.18.31', '1.18.31')).toBe(0);
     expect(compareVersions('0.155.1', '0.154.0')).toBe(1);
     expect(compareVersions('1.0.86', '1.0.9')).toBe(1);
+    expect(compareVersions('0x10.0.0', '16.0.0')).toBeNull();
+    expect(versionAtLeast('0x10.0.0', '1.0.0')).toBe(false);
     expect(compareVersions('2.1.276', '2.1.278')).toBe(-1);
     expect(compareVersions('1.0', '1.0.0')).toBeNull();
     expect(compareVersions('latest', '1.0.0')).toBeNull();
@@ -280,8 +282,15 @@ describe('image lifecycle', () => {
     expect(entry.agentVersions).toBeUndefined();
     expect(activateImage(entry, 'sha256:newer', { claude: '2.1.278' })).toEqual({ previous: 'sha256:new', current: 'sha256:newer' });
     expect(entry.agentVersions).toEqual({ claude: '2.1.278' });
-    expect(rollbackImage(entry)).toEqual({ previous: 'sha256:newer', current: 'sha256:new' });
-    expect(entry.image).toBe('sha256:new');
+    // A cutover the probe could not refresh clears the stale recording
+    // instead of pointing at another image's versions.
+    expect(activateImage(entry, 'sha256:newest')).toEqual({ previous: 'sha256:newer', current: 'sha256:newest' });
+    expect(entry.agentVersions).toBeUndefined();
+    expect(rollbackImage(entry, { claude: '2.1.277' })).toEqual({ previous: 'sha256:newest', current: 'sha256:newer' });
+    expect(entry.agentVersions).toEqual({ claude: '2.1.277' });
+    expect(rollbackImage(entry)).toEqual({ previous: 'sha256:newer', current: 'sha256:newest' });
+    expect(entry.agentVersions).toBeUndefined();
+    expect(entry.image).toBe('sha256:newest');
   });
 });
 

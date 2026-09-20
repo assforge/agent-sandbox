@@ -24,7 +24,7 @@ export function parseInspectedVersions(stdout: string): Record<string, string> {
   // working; no version line ever starts with `Run '`.
   // The positional scheme is fail-closed by construction: any missing or
   // extra line shifts later values into the wrong slots, the shifted value
-  // will not equal its pin, and buildCandidate throws rather than shipping
+  // will not clear its floor, and buildCandidate throws rather than shipping
   // a misattributed image. Doctor drift can at worst warn on a shifted
   // probe; it never installs anything.
   const lines = stdout
@@ -47,9 +47,9 @@ export function parseInspectedVersions(stdout: string): Record<string, string> {
 export function compareVersions(left: string, right: string): number | null {
   const parse = (value: string): [number, number, number] | null => {
     const parts = value.trim().split('.');
-    if (parts.length !== 3) return null;
+    if (parts.length !== 3 || parts.some((part) => !/^[0-9]+$/.test(part))) return null;
     const nums = parts.map(Number);
-    if (nums.some((n) => !Number.isInteger(n) || n < 0)) return null;
+    if (nums.some((n) => !Number.isSafeInteger(n))) return null;
     return nums as [number, number, number];
   };
   const a = parse(left);
@@ -126,12 +126,13 @@ export function recordActivation(previous: string | null, candidate: string): Ac
   return { previous, current: candidate };
 }
 
-/** Explicit cutover: the running image becomes the rollback target. Records the inspected versions when the caller probed them. */
+/** Explicit cutover: the running image becomes the rollback target. Records the inspected versions, or clears a stale recording the probe could not refresh. */
 export function activateImage(entry: WorkspaceEntry, candidate: string, versions?: Record<string, string>): Activation {
   const activation = recordActivation(entry.image, candidate);
   entry.previousImage = activation.previous;
   entry.image = activation.current;
   if (versions) entry.agentVersions = versions;
+  else delete entry.agentVersions;
   return activation;
 }
 
@@ -144,5 +145,6 @@ export function rollbackImage(entry: WorkspaceEntry, versions?: Record<string, s
   entry.previousImage = activation.previous;
   entry.image = activation.current;
   if (versions) entry.agentVersions = versions;
+  else delete entry.agentVersions;
   return activation;
 }

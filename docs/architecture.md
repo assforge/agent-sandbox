@@ -147,7 +147,7 @@ compares the running container against.
 ```
 
 `claude` is the only native channel — the vendor installer under
-`/opt/claude` — and it pins a version like any other agent. A native
+`/opt/claude` — and it carries a floor like any other agent. A native
 engine reads its `latestEndpoint` for the latest release and returns
 null rather than guessing when the feed is unreadable or malformed; npm
 engines ask the registry instead. `agent outdated` is that call for
@@ -378,7 +378,7 @@ removes orphan fork directories (credential files never).
 ## 6. Image lifecycle
 
 ```
-pins (engine catalog) --> build args <AGENT>_VERSION, one per agent
+overrides (upgrade flows, emergencies) --> build args <AGENT>_VERSION
   --> build (docker or apple)
   --> inspect: the five CLI versions must clear their catalog floors;
       the resolved set is the build receipt

@@ -198,6 +198,14 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
   if (entry.network !== undefined && entry.network !== 'open' && entry.network !== 'restricted') {
     throw bad('network must be open or restricted');
   }
+  if (entry.agentVersions !== undefined) {
+    if (typeof entry.agentVersions !== 'object' || entry.agentVersions === null || Array.isArray(entry.agentVersions)) {
+      throw bad('agentVersions must be a string map');
+    }
+    for (const [name, version] of Object.entries(entry.agentVersions)) {
+      if (typeof version !== 'string') throw bad(`agentVersions entry ${name} must be a string`);
+    }
+  }
   if (entry.pendingOperation !== undefined) {
     // A claim is the only thing that freezes a workspace, so a malformed one must
     // fail the load rather than be silently dropped: dropping it would unblock a

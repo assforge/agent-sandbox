@@ -248,7 +248,7 @@ const ACTION_HELP: Record<string, Record<string, string>> = {
     list: 'Usage: sandbox image list [--json, -j]\n\nList local workspace images.\n',
     build: 'Usage: sandbox image build\n\nBuild a verified candidate from current releases; activate explicitly afterwards.\n',
     activate: 'Usage: sandbox image activate <digest>\n\nAsk for confirmation when instances are live; recreates the container on the new image at the next start.\n',
-    rollback: 'Usage: sandbox image rollback <digest>\n\nAsk for confirmation when instances are live. Requires an earlier activation and does not reverse a data migration.\n',
+    rollback: 'Usage: sandbox image rollback\n\nAsk for confirmation when instances are live. Requires an earlier activation and does not reverse a data migration.\n',
     prune: 'Usage: sandbox image prune\n\nRemove workspace images no workspace references (current and previous are kept). Asks for confirmation.\n',
   },
   credentials: {

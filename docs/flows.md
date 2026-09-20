@@ -591,7 +591,7 @@ match.
 build:
   CLI --> runtime: build candidate (target workspace's runtime when
                    --workspace resolves, else the host default)
-  CLI --> candidate: inspect 5 CLI versions (must match the pins exactly)
+  CLI --> candidate: inspect 5 CLI versions (must clear their floors)
   CLI --> candidate: entrypoint + independent ready.json check
   CLI --> user: candidate verified; activate explicitly
   NOTE: no registry write. A build changes nothing that is in use.
