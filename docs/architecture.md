@@ -284,7 +284,9 @@ image (built from templates/Dockerfile, no secrets)
   base                     node:22-bookworm-slim
   apt                      git, ca-certificates, openssh-client, curl
   npm globals (latest)   opencode-ai, @openai/codex, @github/copilot,
-                             @earendil-works/pi-coding-agent
+                             @earendil-works/pi-coding-agent,
+                             @qwen-code/qwen-code, @moonshot-ai/kimi-code,
+                             @mimo-ai/cli, @augmentcode/auggie
                              (NAME_VERSION build args pin one only as an
                              override: upgrade flows, emergencies)
   /opt/claude              claude via the vendor installer (latest unless
@@ -315,7 +317,8 @@ container (per workspace, --cap-drop ALL, user agent)
 `sandbox-entrypoint.sh` is where a home's shape is decided: it deletes any
 stale `ready.json`, creates `.claude`, `.codex`, `.copilot`, `.pi`,
 `.grok`, `.gemini`, `.qwen`, `.kimi-code`, `.local/share/mimocode`,
-`.config/mimocode`, `.augment`,
+`.config/mimocode`, `.augment`, `.cursor`, `.config/devin`,
+`.local/share/devin`, `.kiro`,
 `.config/opencode`, `.config/github-copilot`, `work`, and `instances`
 under `$HOME`, and only then writes the token and `exec`s the command. It
 refuses to run without `SANDBOX_GENERATION` and

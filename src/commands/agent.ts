@@ -57,6 +57,10 @@ export async function agentCommand(deps: MainDeps, action: string, rest: string[
       // latest-only, no feed) still rebuilds bare latest-first; only a bare
       // `all` with nothing resolvable is a no-op.
       const unresolved = names.filter((name) => !resolved.some((item) => item.def.name === name));
+      if (resolved.length === 0 && target === 'all') {
+        deps.stdout('could not resolve latest versions; nothing built\n');
+        return 0;
+      }
       if (Object.keys(overrides).length === 0 && (target === 'all' || unresolved.length === 0)) return 0;
       const tag = `sandbox-workspace:upgrade-${Date.now()}`;
       const built = buildUpgradeCandidate(deps, rt, agents.values(), overrides, tag);

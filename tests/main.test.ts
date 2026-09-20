@@ -173,6 +173,12 @@ describe('main', () => {
     }
   });
 
+  it('reports unresolvable latest versions instead of claiming current', async () => {
+    const d = deps();
+    expect(await main(['agent', 'upgrade', 'all'], d)).toBe(0);
+    expect(d.out.join('')).toMatch(/could not resolve latest versions; nothing built/);
+  });
+
   it('fails closed with exit 2 on a corrupt registry', async () => {
     const home = mkdtempSync(join(tmpdir(), 'sandbox-main-'));
     try {

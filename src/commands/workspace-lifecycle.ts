@@ -77,6 +77,10 @@ export async function workspaceUpgrade(deps: MainDeps, registry: Registry, rest:
         const key = def.installSpec().npmPackage ?? def.name;
         return !recorded || recorded[key] === undefined;
       });
+      if (resolved.length === 0 && target === 'all') {
+        deps.stdout('could not resolve latest versions; nothing built\n');
+        return 0;
+      }
       if (drifted.length === 0 && unrecorded.length === 0 && (target === 'all' || unresolved.length === 0)) {
     deps.stdout('every agent is already at its latest version; nothing to build\n');
     return 0;

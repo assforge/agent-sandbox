@@ -149,9 +149,11 @@ injected as process environment only into that instance's window. They
 are never accepted as command-line arguments, never baked into images,
 and never printed: show displays key names with masked values.
 
-Each instance also gets its own HOME directory inside the container,
-so agent configuration and history do not cross between instances of
-one workspace. Instances of one container can still read one another's
+Each instance also gets its own HOME directory inside the container
+when its home mode is fork or fresh, so agent configuration and history
+do not cross between instances of one workspace. Shared instances use
+the workspace home together and should not run concurrently.
+Instances of one container can still read one another's
 files; the isolation boundary is the container, not the window.
 
 ${SHARED_HELP}
