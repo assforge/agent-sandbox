@@ -1,5 +1,16 @@
 # @assforge/cogent-sandbox
 
+## 0.28.0
+
+### Minor Changes
+
+- 1e9e94a: Add Cursor, Devin and Kiro as native agent engines: catalog entries,
+  container installs (latest-only scripts into HOME-scoped paths),
+  fourteen-command version probe, fork seeding, and doctor drift
+  coverage. Cursor launches with --disable-auto-update baked in;
+  Devin's setup-wizard installer tail is tolerated by binary-existence
+  check.
+
 ## 0.27.0
 
 ### Minor Changes
