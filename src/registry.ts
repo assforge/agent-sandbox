@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { rejectForbiddenMount } from './config.js';
+import { isSafeName } from './engines/types.js';
 import { sandboxDir } from './paths.js';
 
 export interface InstanceEntry {
@@ -171,14 +172,15 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
   for (const instance of entry.instances) {
     if (typeof instance !== 'object' || instance === null) throw bad('instance must be an object');
     const fields = instance as unknown as Record<string, unknown>;
+    // Names drive host paths (credential files) and container paths
+    // (instance homes); windows drive tmux targets. Same predicate as
+    // launch time, enforced at the load boundary so no hand-edited
+    // registry can seed a traversal.
     for (const field of ['name', 'kind', 'window'] as const) {
-      if (!nonEmptyString(fields[field])) throw bad(`instance ${field} must be a non-empty string`);
-    }
-    // The name drives host paths (credential files) and container paths
-    // (instance homes): the same charset as forks, enforced at the load
-    // boundary so no hand-edited registry can seed a traversal.
-    if (typeof fields['name'] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fields['name'])) {
-      throw bad(`instance name is unsafe: ${String(fields['name'])}`);
+      const value = fields[field];
+      if (typeof value !== 'string' || !isSafeName(value)) {
+        throw bad(`instance ${field} is unsafe: ${String(value)}`);
+      }
     }
     if (fields['homeMode'] !== undefined && !HOME_MODES.includes(fields['homeMode'] as HomeMode)) {
       throw bad('instance homeMode must be shared, fork, or fresh');

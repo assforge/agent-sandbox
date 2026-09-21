@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { redactedConfig, rejectForbiddenMount } from './config.js';
+import { isSafeName } from './engines/types.js';
 import type { InstanceEntry, Registry, WorkspaceEntry } from './registry.js';
 import { defaultCanonicalize } from './resolve.js';
 
@@ -82,16 +83,11 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
     if (typeof name !== 'string' || typeof kind !== 'string' || typeof window !== 'string' || !name || !kind || !window) {
       throw new Error('backup workspace.json has an invalid instance');
     }
-    // Same charset as the registry load boundary: a restored name reaches
-    // instance homes and credential files, and an unloadable registry
-    // (written first, validated on next load) would brick the workspace
-    // behind a pending restore claim.
-    // Same charset as the registry load boundary: a restored name reaches
-    // instance homes and credential files, and an unloadable registry
-    // (written first, validated on next load) would brick the workspace
-    // behind a pending restore claim.
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
-      throw new Error(`backup workspace.json has an unsafe instance name: ${name}`);
+    // Same predicate as launch time and the registry load boundary.
+    for (const [field, value] of [['name', name], ['kind', kind], ['window', window]] as const) {
+      if (!isSafeName(value)) {
+        throw new Error(`backup workspace.json has an unsafe instance ${field}: ${value}`);
+      }
     }
     const homeMode = fields['homeMode'];
     if (homeMode !== undefined && homeMode !== 'shared' && homeMode !== 'fork' && homeMode !== 'fresh') {
@@ -167,6 +163,28 @@ export function planRestore(registry: Registry, outputDir: string, homeDir: stri
         return fork;
       })
     : [];
+  const rawVersions = record['agentVersions'];
+  // Recorded versions ride along when they are a clean string map, so a
+  // restore does not demote the workspace to unrecorded (which would force
+  // a rebuild and silence drift). Anything else fails like the load
+  // boundary does; a corrupt recording must not clear a good one quietly.
+  let agentVersions: Record<string, string> | undefined;
+  if (rawVersions !== undefined) {
+    if (typeof rawVersions !== 'object' || rawVersions === null || Array.isArray(rawVersions)) {
+      throw new Error('backup workspace.json has invalid agentVersions');
+    }
+    agentVersions = {};
+    for (const [name, version] of Object.entries(rawVersions)) {
+      if (name.length === 0 || typeof version !== 'string' || version.length === 0) {
+        throw new Error(`backup workspace.json has an invalid agentVersions entry: ${name}`);
+      }
+      agentVersions[name] = version;
+    }
+  }
+  const rawNetwork = record['network'];
+  if (rawNetwork !== undefined && rawNetwork !== 'open' && rawNetwork !== 'restricted') {
+    throw new Error(`backup workspace.json has an invalid network: ${String(rawNetwork)}`);
+  }
   const entry: WorkspaceEntry = {
     id,
     root: canonicalRoot,
@@ -176,12 +194,13 @@ export function planRestore(registry: Registry, outputDir: string, homeDir: stri
     session: requiredName(record, 'session'),
     instances: restoreInstances(record),
     homeVolume: requiredName(record, 'homeVolume'),
-    network: record['network'] === 'restricted' ? 'restricted' : 'open',
+    network: rawNetwork === 'restricted' ? 'restricted' : 'open',
     runtime: typeof record['runtime'] === 'string' && record['runtime'].length > 0 ? (record['runtime'] as string) : 'docker',
     terminal: typeof record['terminal'] === 'string' && record['terminal'].length > 0 ? (record['terminal'] as string) : 'tmux',
     mounts,
     forks,
   };
+  if (agentVersions) entry.agentVersions = agentVersions;
   registry.workspaces[id] = entry;
   return entry;
 }
