@@ -31,6 +31,8 @@ describe('parseArgs', () => {
     expect(SUPPORTED_AGENTS).toContain('cursor');
     expect(SUPPORTED_AGENTS).toContain('devin');
     expect(SUPPORTED_AGENTS).toContain('kiro');
+    expect(SUPPORTED_AGENTS).toContain('aider');
+    expect(SUPPORTED_AGENTS).toContain('goose');
     expect(parseArgs(['claude'])).toEqual({ kind: 'agent', agent: 'claude', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
     expect(parseArgs(['grok'])).toEqual({ kind: 'agent', agent: 'grok', name: undefined, workspace: undefined, forwarded: [], noAttach: false });
     expect(parseArgs(['codex', '--name', 'sdk', '--', '-c', 'x'])).toEqual({

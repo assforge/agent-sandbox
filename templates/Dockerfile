@@ -13,6 +13,8 @@ ARG MIMO_VERSION
 ARG AUGGIE_VERSION
 ARG CLAUDE_VERSION
 ARG GROK_VERSION
+ARG AIDER_VERSION
+ARG GOOSE_VERSION
 
 FROM node:22-bookworm-slim
 
@@ -26,9 +28,11 @@ ARG MIMO_VERSION
 ARG AUGGIE_VERSION
 ARG CLAUDE_VERSION
 ARG GROK_VERSION
+ARG AIDER_VERSION
+ARG GOOSE_VERSION
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl unzip \
+  && apt-get install -y --no-install-recommends git ca-certificates openssh-client curl unzip bzip2 python3-pip \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g \
     "opencode-ai${OPENCODE_VERSION:+@$OPENCODE_VERSION}" \
@@ -39,6 +43,7 @@ RUN apt-get update \
     "@moonshot-ai/kimi-code${KIMI_VERSION:+@$KIMI_VERSION}" \
     "@mimo-ai/cli${MIMO_VERSION:+@$MIMO_VERSION}" \
     "@augmentcode/auggie${AUGGIE_VERSION:+@$AUGGIE_VERSION}" \
+  && pip install --break-system-packages "aider-chat${AIDER_VERSION:+==$AIDER_VERSION}" \
   && npm cache clean --force
 
 # Non-root agent user for everything inside the workspace container.
@@ -52,8 +57,8 @@ ENV HOME=/home/agent
 RUN useradd -u 1001 -m -s /bin/bash agent \
   && mkdir -p /home/agent/.claude /home/agent/.codex /home/agent/.copilot /home/agent/.pi /home/agent/.grok \
     /home/agent/.gemini /home/agent/.qwen /home/agent/.kimi-code /home/agent/.augment /home/agent/.local/share/mimocode \
-    /home/agent/.cursor /home/agent/.config/devin /home/agent/.local/share/devin /home/agent/.kiro \
-    /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/.config/mimocode /home/agent/work \
+    /home/agent/.cursor /home/agent/.config/devin /home/agent/.local/share/devin /home/agent/.kiro /home/agent/.aider \
+    /home/agent/.config/opencode /home/agent/.config/github-copilot /home/agent/.config/mimocode /home/agent/.config/goose /home/agent/work \
   && chown -R agent:agent /home/agent
 
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
@@ -90,6 +95,12 @@ RUN mkdir -p /opt/cursor && export HOME=/opt/cursor \
   && curl -fsSL https://cli.kiro.dev/install | bash -s -- --force \
   && chown -R agent:agent /opt/kiro
 ENV PATH="/opt/cursor/.local/bin:/opt/devin/.local/bin:/opt/kiro/.local/bin:${PATH}"
+# Aider (pip) and goose (standalone script) complete the set. Goose honors
+# GOOSE_BIN_DIR; aider takes ==pins like npm takes @pins.
+RUN mkdir -p /opt/goose/bin && export GOOSE_BIN_DIR=/opt/goose/bin GOOSE_VERSION="${GOOSE_VERSION:-}" CONFIGURE=false \
+  && curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash \
+  && chown -R agent:agent /opt/goose
+ENV PATH="/opt/goose/bin:${PATH}"
 # Claude ships outside npm and must live outside the home volume: the
 # volume is mounted over /home/agent at runtime and would mask anything
 # baked in there. The installer lays everything under $HOME, so point it

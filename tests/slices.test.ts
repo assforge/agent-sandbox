@@ -35,6 +35,10 @@ describe('agents', () => {
     expect(agentEngine(engines, 'cursor').launch).toEqual(['cursor-agent', '--disable-auto-update']);
     expect(agentEngine(engines, 'devin').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '3000.10.31' });
     expect(agentEngine(engines, 'kiro').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '2.22.1' });
+    expect(agentEngine(engines, 'aider').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '0.86.2' });
+    expect(agentEngine(engines, 'aider').launch).toEqual(['aider']);
+    expect(agentEngine(engines, 'goose').installSpec()).toMatchObject({ npmPackage: null, minimumVersion: '1.51.0' });
+    expect(agentEngine(engines, 'goose').launch).toEqual(['goose']);
     expect(agentEngine(engines, 'kiro').launch).toEqual(['kiro-cli']);
     expect(agentEngine(engines, 'qwen').launch).toEqual(['qwen']);
     expect(agentEngine(engines, 'agy').launch).toEqual(['agy']);
@@ -47,7 +51,7 @@ describe('agents', () => {
       latestVersion: () => '9.9.9',
       fetchText: () => '9.9.9',
     }, engines.values());
-    expect(entries).toHaveLength(14);
+    expect(entries).toHaveLength(16);
     expect(entries[0]).toMatchObject({ agent: 'claude', npmPackage: null, installed: null, minimum: '2.1.276', latest: '9.9.9' });
     expect(entries[1]).toMatchObject({ agent: 'opencode', minimum: '1.18.31' });
     expect(entries[4]).toMatchObject({ agent: 'pi', npmPackage: '@earendil-works/pi-coding-agent', minimum: '0.85.1' });
@@ -60,6 +64,8 @@ describe('agents', () => {
     expect(entries[11]).toMatchObject({ agent: 'cursor', npmPackage: null, minimum: '2026.09.10', latest: null });
     expect(entries[12]).toMatchObject({ agent: 'devin', npmPackage: null, minimum: '3000.10.31', latest: null });
     expect(entries[13]).toMatchObject({ agent: 'kiro', npmPackage: null, minimum: '2.22.1', latest: null });
+    expect(entries[14]).toMatchObject({ agent: 'aider', npmPackage: null, minimum: '0.86.2', latest: null });
+    expect(entries[15]).toMatchObject({ agent: 'goose', npmPackage: null, minimum: '1.51.0', latest: null });
     const nullLatest = outdatedEngines({ installedVersion: () => null, latestVersion: () => null, fetchText: () => null }, engines.values());
     expect(nullLatest.every((entry) => entry.latest === null)).toBe(true);
     // A feed that gains a suffix still resolves to the leading version.
@@ -172,6 +178,8 @@ describe('image lifecycle', () => {
       cursor: '2026.09.18',
       devin: '3000.10.31',
       kiro: '2.22.1',
+      aider: '0.86.2',
+      goose: '1.51.0',
     };
     const result = buildCandidate(
       {
@@ -228,6 +236,8 @@ describe('image lifecycle', () => {
           cursor: '2026.09.18',
           devin: '3000.10.31',
           kiro: '2.22.1',
+          aider: '0.86.2',
+          goose: '1.51.0',
         }),
         verifyCandidate: () => true,
       },
@@ -271,6 +281,8 @@ describe('image lifecycle', () => {
             cursor: '2026.09.18',
             devin: '3000.10.31',
             kiro: '2.22.1',
+            aider: '0.86.2',
+            goose: '1.51.0',
           }),
           verifyCandidate: () => false,
         },
@@ -281,9 +293,9 @@ describe('image lifecycle', () => {
     ).toThrow(/failed verification/);
   });
 
-  it('parses the fourteen-engine keyed probe', () => {
+  it('parses the sixteen-engine keyed probe', () => {
     const versions = parseInspectedVersions(
-      'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 0.155.1\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\n0.85.1-unkeyed-stray\ngrok=grok 1.0.34 (3736acbc8658) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit 7c61e5bb)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\nRun \'copilot update\' to check for updates.\n',
+      'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 0.155.1\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\n0.85.1-unkeyed-stray\ngrok=grok 1.0.34 (3736acbc8658) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit 7c61e5bb)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\naider=0.86.2\ngoose=1.51.0\nRun \'copilot update\' to check for updates.\n',
       engineProbeKeys(agentEngines().values()),
     );
     expect(versions).toMatchObject({
@@ -301,6 +313,8 @@ describe('image lifecycle', () => {
       cursor: '2026.09.18',
       devin: '3000.10.31',
       kiro: '2.22.1',
+      aider: '0.86.2',
+      goose: '1.51.0',
     });
     expect(versions).not.toHaveProperty('0.85.1-unkeyed-stray');
   });
@@ -330,6 +344,14 @@ describe('image lifecycle', () => {
     expect(versions['cursor']).toBe('2026.09.18');
   });
 
+  it('strips the aider prefix before the version', () => {
+    const versions = parseInspectedVersions(
+      'aider=aider 0.86.2\n',
+      engineProbeKeys(agentEngines().values()),
+    );
+    expect(versions['aider']).toBe('0.86.2');
+  });
+
   it('sends no version args by default and floors the native claude agent', () => {
     const seenArgs: Record<string, string>[] = [];
     buildCandidate(
@@ -353,6 +375,8 @@ describe('image lifecycle', () => {
           cursor: '2026.09.18',
           devin: '3000.10.31',
           kiro: '2.22.1',
+          aider: '0.86.2',
+          goose: '1.51.0',
         }),
         verifyCandidate: () => true,
       },

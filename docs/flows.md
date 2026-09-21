@@ -176,7 +176,7 @@ CLI --> candidate: test -x /usr/local/bin/sandbox-entrypoint.sh
 CLI --> user: candidate verified + build receipt; activate explicitly with image activate
 ```
 
-"Verified" on this path means the fourteen versions cleared their floors and the
+"Verified" on this path means the sixteen versions cleared their floors and the
 entrypoint is executable — nothing more. It is the weaker of the two
 build paths: `image build` (§4c) runs the same checks and then reads a
 generation back out of a throwaway `ready.json`, which is what makes its
@@ -593,7 +593,7 @@ match.
 build:
   CLI --> runtime: build candidate (target workspace's runtime when
                    --workspace resolves, else the host default)
-  CLI --> candidate: inspect 14 CLI versions (must clear their floors)
+  CLI --> candidate: inspect 16 CLI versions (must clear their floors)
   CLI --> candidate: entrypoint + independent ready.json check
   CLI --> user: candidate verified; activate explicitly
   NOTE: no registry write. A build changes nothing that is in use.
