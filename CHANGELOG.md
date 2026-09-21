@@ -1,5 +1,13 @@
 # @assforge/cogent-sandbox
 
+## 0.30.1
+
+### Patch Changes
+
+- 65c6e28: Close final-review findings: drift walks every catalog engine
+  (recorded-but-gone warns), instance names validated at the registry
+  load boundary, and doc/help leftovers fixed.
+
 ## 0.30.0
 
 ### Minor Changes
