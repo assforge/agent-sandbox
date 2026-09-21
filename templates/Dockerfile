@@ -98,7 +98,7 @@ ENV PATH="/opt/cursor/.local/bin:/opt/devin/.local/bin:/opt/kiro/.local/bin:${PA
 # Aider (pip) and goose (standalone script) complete the set. Goose honors
 # GOOSE_BIN_DIR; aider takes ==pins like npm takes @pins.
 RUN mkdir -p /opt/goose/bin && export GOOSE_BIN_DIR=/opt/goose/bin GOOSE_VERSION="${GOOSE_VERSION:-}" CONFIGURE=false \
-  && curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash \
+  && curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash \
   && chown -R agent:agent /opt/goose
 ENV PATH="/opt/goose/bin:${PATH}"
 # Claude ships outside npm and must live outside the home volume: the

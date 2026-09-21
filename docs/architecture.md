@@ -165,9 +165,9 @@ compares the running container against.
   goose     native  script, latest-only       .config/goose
 
   grok, agy  supported since 0.26.0; cursor, devin and kiro since
-             0.28.0. DeepSeek has no official CLI (its models already
-             work through pi, opencode and aider); aider and goose stay
-             out (python toolchain / unvetted installer).
+             0.28.0; aider and goose since 0.30.0. DeepSeek has no
+             official CLI (its models already work through pi, opencode
+             and aider).
 
 ```
 
@@ -412,7 +412,7 @@ shared   HOME=/home/agent. Default, including old entries without
          writers against the same files.
 fork     On first launch, for each of .claude, .codex, .copilot, .pi, .grok, .gemini,
          .qwen, .kimi-code, .local/share/mimocode, .augment, .cursor,
-         .config/devin, .local/share/devin, .kiro
+         .config/devin, .local/share/devin, .kiro, .aider
          and .config: if the instance does not have that directory yet,
          create it and copy the shared one in. Per directory, not per
          file — a directory that already exists is never topped up.

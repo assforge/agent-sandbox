@@ -344,6 +344,14 @@ describe('image lifecycle', () => {
     expect(versions['cursor']).toBe('2026.09.18');
   });
 
+  it('strips the aider prefix before the version', () => {
+    const versions = parseInspectedVersions(
+      'aider=aider 0.86.2\n',
+      engineProbeKeys(agentEngines().values()),
+    );
+    expect(versions['aider']).toBe('0.86.2');
+  });
+
   it('sends no version args by default and floors the native claude agent', () => {
     const seenArgs: Record<string, string>[] = [];
     buildCandidate(
