@@ -82,6 +82,17 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
     if (typeof name !== 'string' || typeof kind !== 'string' || typeof window !== 'string' || !name || !kind || !window) {
       throw new Error('backup workspace.json has an invalid instance');
     }
+    // Same charset as the registry load boundary: a restored name reaches
+    // instance homes and credential files, and an unloadable registry
+    // (written first, validated on next load) would brick the workspace
+    // behind a pending restore claim.
+    // Same charset as the registry load boundary: a restored name reaches
+    // instance homes and credential files, and an unloadable registry
+    // (written first, validated on next load) would brick the workspace
+    // behind a pending restore claim.
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
+      throw new Error(`backup workspace.json has an unsafe instance name: ${name}`);
+    }
     const homeMode = fields['homeMode'];
     if (homeMode !== undefined && homeMode !== 'shared' && homeMode !== 'fork' && homeMode !== 'fresh') {
       throw new Error('backup workspace.json has an invalid instance homeMode');
