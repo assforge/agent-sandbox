@@ -162,7 +162,8 @@ compares the running container against.
                                           .local/share/devin (XDG)
   kiro      native  script, latest-only   .kiro
   aider     native  pip>=0.86.2, API keys only .aider
-  goose     native  script, latest-only       .config/goose
+  goose     native  script (GOOSE_VERSION overrides), latest-only
+                                          by default              .config/goose
 
   grok, agy  supported since 0.26.0; cursor, devin and kiro since
              0.28.0; qwen, kimi, mimo and auggie since 0.27.0; aider
@@ -285,7 +286,7 @@ line of defence.
 ```
 image (built from templates/Dockerfile, no secrets)
   base                     node:22-bookworm-slim
-  apt                      git, ca-certificates, openssh-client, curl, unzip, bzip2
+  apt                      git, ca-certificates, openssh-client, curl, unzip, bzip2, python3-pip
   npm globals (latest)   opencode-ai, @openai/codex, @github/copilot,
                              @earendil-works/pi-coding-agent,
                              @qwen-code/qwen-code, @moonshot-ai/kimi-code,
@@ -324,7 +325,7 @@ container (per workspace, --cap-drop ALL, user agent)
 stale `ready.json`, creates `.claude`, `.codex`, `.copilot`, `.pi`,
 `.grok`, `.gemini`, `.qwen`, `.kimi-code`, `.local/share/mimocode`,
 `.config/mimocode`, `.augment`, `.cursor`, `.config/devin`,
-`.local/share/devin`, `.kiro`,
+`.local/share/devin`, `.kiro`, `.aider`, `.config/goose`,
 `.config/opencode`, `.config/github-copilot`, `work`, and `instances`
 under `$HOME`, and only then writes the token and `exec`s the command. It
 refuses to run without `SANDBOX_GENERATION` and

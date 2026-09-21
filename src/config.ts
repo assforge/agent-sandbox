@@ -65,6 +65,10 @@ export function redactedConfig(entry: WorkspaceEntry): Record<string, unknown> {
     terminal: entry.terminal,
     mounts: entry.mounts,
     forks: entry.forks,
+    // Recorded versions are data, not secrets: carrying them lets a restore
+    // keep the drift baseline instead of demoting to unrecorded. The claim
+    // stays excluded by keeping this an explicit field list.
+    ...(entry.agentVersions === undefined ? {} : { agentVersions: entry.agentVersions }),
     instances: entry.instances.map((instance) => ({
       name: instance.name,
       kind: instance.kind,

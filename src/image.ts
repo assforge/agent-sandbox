@@ -77,9 +77,6 @@ export function parseInspectedVersions(stdout: string, allowed: Iterable<string>
     // First wins: a duplicated key keeps the earliest report rather than
     // letting a later line overwrite it.
     if (Object.hasOwn(versions, key)) continue;
-    // First wins: a duplicated key keeps the earliest report rather than
-    // letting a later line overwrite it.
-
     const trim = trims.get(key);
     versions[key] = trim ? trim(value) : value;
   }

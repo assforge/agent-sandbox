@@ -174,11 +174,15 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
     for (const field of ['name', 'kind', 'window'] as const) {
       if (!nonEmptyString(fields[field])) throw bad(`instance ${field} must be a non-empty string`);
     }
-    // The name drives host paths (credential files) and container paths
-    // (instance homes): the same charset as forks, enforced at the load
+    // Name, kind, and window share the launch-time assertSafeName charset:
+    // names drive host paths (credential files) and container paths
+    // (instance homes), windows drive tmux targets. Enforced at the load
     // boundary so no hand-edited registry can seed a traversal.
-    if (typeof fields['name'] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fields['name'])) {
-      throw bad(`instance name is unsafe: ${String(fields['name'])}`);
+    for (const field of ['name', 'kind', 'window'] as const) {
+      const value = fields[field];
+      if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value)) {
+        throw bad(`instance ${field} is unsafe: ${String(value)}`);
+      }
     }
     if (fields['homeMode'] !== undefined && !HOME_MODES.includes(fields['homeMode'] as HomeMode)) {
       throw bad('instance homeMode must be shared, fork, or fresh');

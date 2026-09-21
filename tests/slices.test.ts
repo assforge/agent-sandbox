@@ -582,6 +582,44 @@ describe('locks and backups', () => {
         'utf8',
       );
       expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), traversal, dir)).toThrow(/unsafe instance name/);
+      for (const [field, value] of [['kind', 'k k'], ['window', 's:w']] as const) {
+        const odd = join(dir, `odd-${field}`);
+        mkdirSync(odd, { recursive: true });
+        writeFileSync(
+          join(odd, 'workspace.json'),
+          JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [], instances: [{ name: 'w', kind: 'k', window: 'w', [field]: value }] }),
+          'utf8',
+        );
+        expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), odd, dir), field).toThrow(/unsafe instance/);
+      }
+      // Versions ride along when clean, so a restore keeps its drift
+      // baseline; garbage fails like the load boundary, and a bad
+      // network is refused instead of coerced to open.
+      const versioned = join(dir, 'versioned');
+      mkdirSync(versioned, { recursive: true });
+      writeFileSync(
+        join(versioned, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [], agentVersions: { claude: '2.1.276' } }),
+        'utf8',
+      );
+      const restored = restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), versioned, dir);
+      expect(restored.agentVersions).toEqual({ claude: '2.1.276' });
+      const badVersions = join(dir, 'badversions');
+      mkdirSync(badVersions, { recursive: true });
+      writeFileSync(
+        join(badVersions, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [], agentVersions: { claude: 42 } }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), badVersions, dir)).toThrow(/invalid agentVersions/);
+      const badNetwork = join(dir, 'badnetwork');
+      mkdirSync(badNetwork, { recursive: true });
+      writeFileSync(
+        join(badNetwork, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [], network: 'wide' }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), badNetwork, dir)).toThrow(/invalid network/);
       // A hand-edited manifest must not smuggle in a mount that
       // registration would refuse; the failure lands before any claim.
       // homeDir is passed canonical, as production passes os.homedir().
