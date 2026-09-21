@@ -29,8 +29,10 @@ mkdir -p \
   "$HOME/.config/devin" \
   "$HOME/.local/share/devin" \
   "$HOME/.kiro" \
+  "$HOME/.aider" \
   "$HOME/.config/opencode" \
   "$HOME/.config/github-copilot" \
+  "$HOME/.config/goose" \
   "$HOME/work" \
   "$HOME/instances"
 

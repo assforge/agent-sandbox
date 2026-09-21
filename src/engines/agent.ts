@@ -76,7 +76,7 @@ export interface AgentCatalogEntry {
   latestEndpoint: string | null;
 }
 
-/** Built-in catalog: the fourteen verified agents, as data. */
+/** Built-in catalog: the sixteen verified agents, as data. */
 export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'claude', statePaths: ['.claude'], launch: ['claude'], npmPackage: null, minimumVersion: '2.1.276', latestEndpoint: 'https://downloads.claude.ai/claude-code-releases/latest' },
   { name: 'opencode', statePaths: ['.config/opencode'], launch: ['opencode'], npmPackage: 'opencode-ai', minimumVersion: '1.18.31', latestEndpoint: null },
@@ -92,6 +92,8 @@ export const BUILTIN_CATALOG: AgentCatalogEntry[] = [
   { name: 'cursor', statePaths: ['.cursor'], launch: ['cursor-agent', '--disable-auto-update'], npmPackage: null, minimumVersion: '2026.09.10', latestEndpoint: null },
   { name: 'devin', statePaths: ['.config/devin', '.local/share/devin'], launch: ['devin'], npmPackage: null, minimumVersion: '3000.10.31', latestEndpoint: null },
   { name: 'kiro', statePaths: ['.kiro'], launch: ['kiro-cli'], npmPackage: null, minimumVersion: '2.22.1', latestEndpoint: null },
+  { name: 'aider', statePaths: ['.aider'], launch: ['aider'], npmPackage: null, minimumVersion: '0.86.2', latestEndpoint: null },
+  { name: 'goose', statePaths: ['.config/goose'], launch: ['goose'], npmPackage: null, minimumVersion: '1.51.0', latestEndpoint: null },
 ];
 
 /** Agents with no verified install channel. Named here, never constructed. Empty today; the guard stays for future names. */

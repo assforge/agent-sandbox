@@ -68,6 +68,8 @@ describe('runDoctor', () => {
       cursor: '2026.09.18',
       devin: '3000.10.31',
       kiro: '2.22.1',
+      aider: '0.86.2',
+      goose: '1.51.0',
     };
     expect(driftChecks({})).toEqual([]);
     expect(driftChecks(clean, clean)).toEqual([]);

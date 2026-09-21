@@ -58,6 +58,7 @@ const VERSION_TRIMS: Array<[string, (line: string) => string]> = [
   ['cursor', (line) => line.replace(/^cursor-agent /, '').split('-')[0] as string],
   ['devin', (line) => line.replace(/^devin /, '').split(' ')[0] as string],
   ['kiro', (line) => line.replace(/^kiro-cli /, '').split(' ')[0] as string],
+  ['aider', (line) => line.replace(/^aider /, '')],
 ];
 
 /** Parse the inspect probe into versions keyed for buildCandidate. Only keys in the allowed set are kept: stray lines never enter a recording. */

@@ -168,7 +168,7 @@ class FakeWorld {
         const arg = (name: string, fallback: string): string => this.lastBuildArgs[name] ?? fallback;
         return {
           status: 0,
-          stdout: `claude=${arg('CLAUDE_VERSION', '2.1.276')} (Claude Code)\nopencode-ai=${arg('OPENCODE_VERSION', '1.18.31')}\n@openai/codex=codex-cli ${arg('CODEX_VERSION', '0.155.1')}\n@github/copilot=GitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n@earendil-works/pi-coding-agent=${arg('PI_VERSION', '0.85.1')}\ngrok=grok ${arg('GROK_VERSION', '1.0.34')} (abc) [stable]\nagy=${arg('AGY_VERSION', '1.2.7')}\n@qwen-code/qwen-code=${arg('QWEN_VERSION', '0.24.1')}\n@moonshot-ai/kimi-code=${arg('KIMI_VERSION', '2.0.2')}\n@mimo-ai/cli=${arg('MIMO_VERSION', '0.1.14')}\n@augmentcode/auggie=${arg('AUGGIE_VERSION', '0.36.0')} (commit abc)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\n`,
+          stdout: `claude=${arg('CLAUDE_VERSION', '2.1.276')} (Claude Code)\nopencode-ai=${arg('OPENCODE_VERSION', '1.18.31')}\n@openai/codex=codex-cli ${arg('CODEX_VERSION', '0.155.1')}\n@github/copilot=GitHub Copilot CLI ${arg('COPILOT_VERSION', '1.0.86')}.\n@earendil-works/pi-coding-agent=${arg('PI_VERSION', '0.85.1')}\ngrok=grok ${arg('GROK_VERSION', '1.0.34')} (abc) [stable]\nagy=${arg('AGY_VERSION', '1.2.7')}\n@qwen-code/qwen-code=${arg('QWEN_VERSION', '0.24.1')}\n@moonshot-ai/kimi-code=${arg('KIMI_VERSION', '2.0.2')}\n@mimo-ai/cli=${arg('MIMO_VERSION', '0.1.14')}\n@augmentcode/auggie=${arg('AUGGIE_VERSION', '0.36.0')} (commit abc)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\naider=0.86.2\ngoose=1.51.0\n`,
           stderr: '',
         };
       }
@@ -211,7 +211,7 @@ class FakeWorld {
     if (verb === 'exec' && rest.some((arg) => typeof arg === 'string' && arg.includes("'claude'="))) {
       return {
         status: 0,
-        stdout: this.execVersions ?? 'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 0.155.1\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\ngrok=grok 1.0.34 (abc) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit abc)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\n',
+        stdout: this.execVersions ?? 'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 0.155.1\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\ngrok=grok 1.0.34 (abc) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit abc)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\naider=0.86.2\ngoose=1.51.0\n',
         stderr: '',
       };
     }
@@ -585,7 +585,7 @@ describe('workspace lifecycle flows', () => {
       expect(await main(['workspace', 'start', '--workspace', root], deps)).toBe(0);
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).not.toContain('agent-drift');
-      world.execVersions = 'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 9.9.9\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\ngrok=grok 1.0.34 (abc) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit abc)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\n';
+      world.execVersions = 'claude=2.1.276 (Claude Code)\nopencode-ai=1.18.31\n@openai/codex=codex-cli 9.9.9\n@github/copilot=GitHub Copilot CLI 1.0.86.\n@earendil-works/pi-coding-agent=0.85.1\ngrok=grok 1.0.34 (abc) [stable]\nagy=1.2.7\n@qwen-code/qwen-code=0.24.1\n@moonshot-ai/kimi-code=2.0.2\n@mimo-ai/cli=0.1.14\n@augmentcode/auggie=0.36.0 (commit abc)\ncursor=2026.09.18-9a7762b\ndevin=devin 3000.10.31 (b98cc431)\nkiro=kiro-cli 2.22.1\naider=0.86.2\ngoose=1.51.0\n';
       expect(await main(['doctor', '--workspace', root], deps)).toBe(0);
       expect(out.join('')).toContain('agent-drift-codex');
       expect(out.join('')).toContain('sandbox workspace upgrade');

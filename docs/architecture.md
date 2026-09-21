@@ -126,7 +126,7 @@ AgentEngine     name, statePaths, launch, installSpec(), latestVersion()
   statePaths    home-relative dirs this agent owns (fork seeds, see §5)
   launch        argv vector, never a shell string
 
-built-in catalog — fourteen entries, held as data. Versions are floors, not
+built-in catalog — sixteen entries, held as data. Versions are floors, not
 pins: the image installs whatever the channels currently serve
 (latest-first), and the build gate demands every binary report at or
 above its floor. The resolved set is printed as the build receipt and
@@ -161,6 +161,8 @@ compares the running container against.
   devin     native  script, latest-only   .config/devin,
                                           .local/share/devin (XDG)
   kiro      native  script, latest-only   .kiro
+  aider     native  pip>=0.86.2, API keys only .aider
+  goose     native  script, latest-only       .config/goose
 
   grok, agy  supported since 0.26.0; cursor, devin and kiro since
              0.28.0. DeepSeek has no official CLI (its models already
@@ -385,6 +387,8 @@ never launches an agent.
   .config/devin/               devin config
   .local/share/devin/          devin auth and sessions
   .kiro/                       kiro shared config
+  .aider/                      aider state (BYOK: API keys, no subscription login)
+  .config/goose/               goose state
   .augment/                    auggie state
   .config/opencode/            opencode state
   .config/github-copilot/      copilot state
@@ -420,7 +424,7 @@ fresh    Empty room. Nothing is copied, nothing is shared.
 
 The copy is unfiltered. A comment in `lifecycle.ts` calls the fork list
 "caches excluded", and no code excludes them: everything under those
-fifteen directories is copied (fourteen engines; `.config/devin` rides
+sixteen directories is copied (sixteen engines; `.config/devin` rides
 alongside the `.config` whole-tree entry). Read that comment as intent,
 not as behaviour.
 
@@ -434,7 +438,7 @@ removes orphan fork directories (credential files never).
 ```
 overrides (upgrade flows, emergencies) --> build args <AGENT>_VERSION
   --> build (docker or apple)
-  --> inspect: the fourteen CLI versions must clear their catalog floors;
+  --> inspect: the sixteen CLI versions must clear their catalog floors;
       the resolved set is the build receipt
   --> verify: the entrypoint is executable, and -- on the `image build`
       path only -- a throwaway run wrote a ready.json carrying the
