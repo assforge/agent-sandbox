@@ -116,7 +116,7 @@ function validateCatalogEntry(value: unknown): AgentCatalogEntry {
   if ((UNSUPPORTED_AGENT_NAMES as readonly string[]).includes(name)) {
     throw new Error(`agent catalog entry ${name} is not supported in containers (no verified linux install channel)`);
   }
-  if (!Array.isArray(statePaths) || !statePaths.every((item): item is string => typeof item === 'string' && item.length > 0)) {
+  if (!Array.isArray(statePaths) || statePaths.length === 0 || !statePaths.every((item): item is string => typeof item === 'string' && item.length > 0)) {
     throw new Error(`agent catalog entry ${name} has invalid statePaths`);
   }
   if (!Array.isArray(launch) || launch.length === 0 || !launch.every((item): item is string => typeof item === 'string' && item.length > 0)) {

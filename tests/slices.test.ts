@@ -571,6 +571,17 @@ describe('locks and backups', () => {
         'utf8',
       );
       expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), sneaky, dir)).toThrow(/unsafe forks/);
+      // An instance name reaches homes and credential files, so the
+      // restore boundary enforces the charset there too: otherwise the
+      // entry would save fine and brick on the next load, claim set.
+      const traversal = join(dir, 'traversal');
+      mkdirSync(traversal, { recursive: true });
+      writeFileSync(
+        join(traversal, 'workspace.json'),
+        JSON.stringify({ id: 'w', root: '/w', container: 'c', session: 's', homeVolume: 'v', mounts: [], forks: [], instances: [{ name: '../evil', kind: 'k', window: 'w' }] }),
+        'utf8',
+      );
+      expect(() => restoreWorkspace({ copyFromContainer: () => {}, copyToContainer: () => {} }, emptyRegistry(), traversal, dir)).toThrow(/unsafe instance name/);
       // A hand-edited manifest must not smuggle in a mount that
       // registration would refuse; the failure lands before any claim.
       // homeDir is passed canonical, as production passes os.homedir().

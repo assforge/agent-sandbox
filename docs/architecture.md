@@ -165,9 +165,10 @@ compares the running container against.
   goose     native  script, latest-only       .config/goose
 
   grok, agy  supported since 0.26.0; cursor, devin and kiro since
-             0.28.0; aider and goose since 0.30.0. DeepSeek has no
-             official CLI (its models already work through pi, opencode
-             and aider).
+             0.28.0; qwen, kimi, mimo and auggie since 0.27.0; aider
+             and goose since 0.30.0 (goose accepts GOOSE_VERSION).
+             DeepSeek has no official CLI (its models already work
+             through pi, opencode and aider).
 
 ```
 
@@ -284,16 +285,19 @@ line of defence.
 ```
 image (built from templates/Dockerfile, no secrets)
   base                     node:22-bookworm-slim
-  apt                      git, ca-certificates, openssh-client, curl
+  apt                      git, ca-certificates, openssh-client, curl, unzip, bzip2
   npm globals (latest)   opencode-ai, @openai/codex, @github/copilot,
                              @earendil-works/pi-coding-agent,
                              @qwen-code/qwen-code, @moonshot-ai/kimi-code,
                              @mimo-ai/cli, @augmentcode/auggie
                              (NAME_VERSION build args pin one only as an
                              override: upgrade flows, emergencies)
+  pip (latest)             aider-chat (AIDER_VERSION ==override)
   /opt/claude              claude via the vendor installer (latest unless
                            CLAUDE_VERSION overrides), agent-owned;
                            PATH gains /opt/claude/.local/bin
+  /opt/goose               goose via its installer (GOOSE_VERSION overrides),
+                           agent-owned; binary at /opt/goose/bin/goose
   /opt/grok                grok via its installer (GROK_VERSION overrides),
                            agent-owned; binary at /opt/grok/bin/grok with
                            a 130MB downloads cache alongside (runtime
@@ -380,7 +384,6 @@ never launches an agent.
   .gemini/                     agy state
   .qwen/                       qwen state
   .kimi-code/                  kimi state
-  .config/mimocode/            mimo config
   .config/mimocode/            mimo config
   .local/share/mimocode/       mimo auth and sessions
   .cursor/                     cursor state
@@ -613,10 +616,11 @@ runtime socket — a socket bind is not refused by this guard.
   Execution uses argv vectors. Where a `sh -c` script is assembled at
   all, every interpolated value is first constrained to the shared
   safe-name charset `/^[A-Za-z0-9][A-Za-z0-9_.-]*$/` (colon excluded) —
-  instance names and fork names both, the latter re-validated at the
-  registry load boundary so neither a hand-edited registry nor a
-  restored backup can seed one. An interpolated value that is not a
-  safe name is a defect even when today's callers happen to pass one.
+  instance names and fork names both, each re-validated at the
+  registry load boundary and at the restore boundary, so neither a
+  hand-edited registry nor a restored backup can seed one. An
+  interpolated value that is not a safe name is a defect even when
+  today's callers happen to pass one.
 
 ## 10. Supported platforms
 
