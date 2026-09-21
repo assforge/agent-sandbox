@@ -1,5 +1,15 @@
 # @assforge/cogent-sandbox
 
+## 0.30.0
+
+### Minor Changes
+
+- 2385c29: Add Aider and Goose as native agent engines: catalog entries (pip
+  floor plus standalone script), container installs, sixteen-command
+  version probe, fork seeding, and doctor drift coverage. Aider needs
+  API keys (no subscription login); goose configure step is skipped
+  headless.
+
 ## 0.29.0
 
 ### Minor Changes
