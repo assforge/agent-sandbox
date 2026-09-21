@@ -10,8 +10,12 @@ export interface ExecSpec {
 }
 
 /** Charset shared by instance names, window names, and lock identities. */
+export function isSafeName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name);
+}
+
 export function assertSafeName(kind: string, name: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || name.includes(':')) {
+  if (!isSafeName(name)) {
     throw new Error(`invalid ${kind} name: ${name}; use letters, digits, dot, underscore, or hyphen`);
   }
 }

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { redactedConfig, rejectForbiddenMount } from './config.js';
+import { isSafeName } from './engines/types.js';
 import type { InstanceEntry, Registry, WorkspaceEntry } from './registry.js';
 import { defaultCanonicalize } from './resolve.js';
 
@@ -82,13 +83,9 @@ function restoreInstances(record: Record<string, unknown>): InstanceEntry[] {
     if (typeof name !== 'string' || typeof kind !== 'string' || typeof window !== 'string' || !name || !kind || !window) {
       throw new Error('backup workspace.json has an invalid instance');
     }
-    // Same charset as the registry load boundary and the launch-time
-    // assertSafeName: a restored name, kind, or window reaches instance
-    // homes, credential files, and tmux targets, and an unloadable
-    // registry (written first, validated on next load) would brick the
-    // workspace behind a pending restore claim.
+    // Same predicate as launch time and the registry load boundary.
     for (const [field, value] of [['name', name], ['kind', kind], ['window', window]] as const) {
-      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value)) {
+      if (!isSafeName(value)) {
         throw new Error(`backup workspace.json has an unsafe instance ${field}: ${value}`);
       }
     }
