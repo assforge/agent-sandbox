@@ -1,5 +1,12 @@
 # @assforge/cogent-sandbox
 
+## 0.30.2
+
+### Patch Changes
+
+- a765f03: Unify the safe-name charset behind one shared predicate and fix
+  leftover doc nits from the final sweep.
+
 ## 0.30.1
 
 ### Patch Changes
