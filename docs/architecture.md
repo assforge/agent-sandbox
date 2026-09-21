@@ -165,9 +165,10 @@ compares the running container against.
   goose     native  script, latest-only       .config/goose
 
   grok, agy  supported since 0.26.0; cursor, devin and kiro since
-             0.28.0; aider and goose since 0.30.0. DeepSeek has no
-             official CLI (its models already work through pi, opencode
-             and aider).
+             0.28.0; qwen, kimi, mimo and auggie since 0.27.0; aider
+             and goose since 0.30.0 (goose accepts GOOSE_VERSION).
+             DeepSeek has no official CLI (its models already work
+             through pi, opencode and aider).
 
 ```
 
@@ -380,7 +381,6 @@ never launches an agent.
   .gemini/                     agy state
   .qwen/                       qwen state
   .kimi-code/                  kimi state
-  .config/mimocode/            mimo config
   .config/mimocode/            mimo config
   .local/share/mimocode/       mimo auth and sessions
   .cursor/                     cursor state

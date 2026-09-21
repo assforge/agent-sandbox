@@ -35,8 +35,9 @@ upgrade` · §4c `image build` · §5 `update` · §6 `workspace migrate` · §7
 list`, `show`; `runtime list`; `terminal list`; `help`, `version`.
 
 Derived from source, so the coverage claim is checkable. The counting rule:
-a `case` label in one of the seven `switch` statements in
-`src/bin/sandbox.ts`, with `help` excluded. That gives **48 arms**. Two of
+a `case` label in one of the seven `switch` statements (the entry
+dispatch in `src/bin/sandbox.ts` plus one per resource group in
+`src/commands/`), with `help` excluded. That gives **55 arms**. Two of
 them are labels sharing one body (`bare` and `shell`), so this counts
 labels rather than distinct behaviours; `agentAdmin` is an internal
 forwarder to the `agent` group rather than a command anyone types; and

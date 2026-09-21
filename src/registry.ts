@@ -174,6 +174,12 @@ function validateWorkspaceEntry(registryPath: string, key: string, entry: Worksp
     for (const field of ['name', 'kind', 'window'] as const) {
       if (!nonEmptyString(fields[field])) throw bad(`instance ${field} must be a non-empty string`);
     }
+    // The name drives host paths (credential files) and container paths
+    // (instance homes): the same charset as forks, enforced at the load
+    // boundary so no hand-edited registry can seed a traversal.
+    if (typeof fields['name'] !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(fields['name'])) {
+      throw bad(`instance name is unsafe: ${String(fields['name'])}`);
+    }
     if (fields['homeMode'] !== undefined && !HOME_MODES.includes(fields['homeMode'] as HomeMode)) {
       throw bad('instance homeMode must be shared, fork, or fresh');
     }

@@ -37,6 +37,7 @@ describe('engine registries', () => {
     expect(() => loadAgentCatalog({})).toThrow(/must be an array/);
     expect(() => loadAgentCatalog([{ name: 'bad name!' }])).toThrow(/invalid name/);
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: 's', launch: ['x'] }])).toThrow(/statePaths/);
+    expect(() => loadAgentCatalog([{ name: 'x', statePaths: [], launch: ['x'] }])).toThrow(/statePaths/);
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: [] }])).toThrow(/launch/);
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: ['x'], npmPackage: 'p' }])).toThrow(/together/);
     expect(() => loadAgentCatalog([{ name: 'x', statePaths: ['s'], launch: ['x'], npmPackage: null, minimumVersion: null }])).toThrow(/minimum version/);

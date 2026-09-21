@@ -132,51 +132,24 @@ export function hookChecks(missing: string[]): DoctorCheck[] {
   ];
 }
 /**
- * Warn when the running container disagrees with what its image recorded
- * at activation (something moved underneath: a self-updater, a hand edit).
- * Without a recording, fall back to the catalog floor: running below the
- * supported minimum warns. Unknown agents are ignored; the check is
- * local-only and never touches the network.
+ * Walk every catalog engine against the running probe and the activation
+ * recording: mismatch warns, recorded-but-gone warns, absent-from-both
+ * warns when a recording exists, and running-below-floor warns without
+ * one. Unknown agents are ignored; the check is local-only and never
+ * touches the network.
  */
 export function driftChecks(running: Record<string, string>, recorded: Record<string, string> | null = null): DoctorCheck[] {
-  const floors = new Map<string, { name: string; version: string }>();
+  const checks: DoctorCheck[] = [];
   for (const entry of BUILTIN_CATALOG) {
     if (!entry.minimumVersion) continue;
-    floors.set(entry.name, { name: entry.name, version: entry.minimumVersion });
-    if (entry.npmPackage) floors.set(entry.npmPackage, { name: entry.name, version: entry.minimumVersion });
-  }
-  const checks: DoctorCheck[] = [];
-  for (const [key, version] of Object.entries(running)) {
-    const want = floors.get(key);
-    if (!want) continue;
-    const recordedVersion = recorded?.[key];
-    if (recordedVersion && version !== recordedVersion) {
-      checks.push({
-        id: `agent-drift-${want.name}`,
-        group: 'Workspace',
-        status: 'warn',
-        summary: `${want.name} runs ${version} but the image recorded ${recordedVersion}`,
-        remediation: 'Run: sandbox workspace upgrade to rebuild, or re-activate the intended image',
-      });
-      continue;
-    }
-    if (!recordedVersion && versionAtLeast(version, want.version) === false) {
-      checks.push({
-        id: `agent-drift-${want.name}`,
-        group: 'Workspace',
-        status: 'warn',
-        summary: `${want.name} runs ${version}, below the supported minimum ${want.version}`,
-        remediation: 'Run: sandbox workspace upgrade',
-      });
-    }
-  }
-  // Engines in neither the running set nor the recording are absent from
-  // the image, not merely dormant: dormant ones are recorded at activation.
-  // Without any recording there is nothing to compare against, so skip.
-  if (recorded) {
-    for (const entry of BUILTIN_CATALOG) {
-      const key = entry.npmPackage ?? entry.name;
-      if (!Object.hasOwn(running, key) && !Object.hasOwn(recorded, key)) {
+    const key = entry.npmPackage ?? entry.name;
+    const runningVersion = Object.hasOwn(running, key) ? running[key] : undefined;
+    const recordedVersion = recorded ? (Object.hasOwn(recorded, key) ? recorded[key] : undefined) : undefined;
+    if (runningVersion === undefined && recordedVersion === undefined) {
+      // Absent from the image, not merely dormant: dormant binaries are
+      // recorded at activation. Without any recording there is nothing to
+      // compare against, so skip.
+      if (recorded) {
         checks.push({
           id: `agent-drift-${entry.name}`,
           group: 'Workspace',
@@ -185,6 +158,36 @@ export function driftChecks(running: Record<string, string>, recorded: Record<st
           remediation: 'Run: sandbox workspace upgrade',
         });
       }
+      continue;
+    }
+    if (runningVersion !== undefined && recordedVersion !== undefined && runningVersion !== recordedVersion) {
+      checks.push({
+        id: `agent-drift-${entry.name}`,
+        group: 'Workspace',
+        status: 'warn',
+        summary: `${entry.name} runs ${runningVersion} but the image recorded ${recordedVersion}`,
+        remediation: 'Run: sandbox workspace upgrade to rebuild, or re-activate the intended image',
+      });
+      continue;
+    }
+    if (runningVersion === undefined) {
+      checks.push({
+        id: `agent-drift-${entry.name}`,
+        group: 'Workspace',
+        status: 'warn',
+        summary: `${entry.name} is recorded but not running; its binary may have been removed`,
+        remediation: 'Run: sandbox workspace upgrade to rebuild',
+      });
+      continue;
+    }
+    if (recordedVersion === undefined && versionAtLeast(runningVersion, entry.minimumVersion) === false) {
+      checks.push({
+        id: `agent-drift-${entry.name}`,
+        group: 'Workspace',
+        status: 'warn',
+        summary: `${entry.name} runs ${runningVersion}, below the supported minimum ${entry.minimumVersion}`,
+        remediation: 'Run: sandbox workspace upgrade',
+      });
     }
   }
   return checks;
